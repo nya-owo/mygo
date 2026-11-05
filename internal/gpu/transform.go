@@ -22,9 +22,12 @@ type clipMaskSlot struct {
 	slot  int
 }
 
-// idleMaskBytes is how much memory the masks no clip of the frame uses
-// keep, the least recently used dropped first.
-const idleMaskBytes = 32 << 20
+// Masks can return over the next few frames as transforms come and go.
+// A window that keeps animating must still release those of a page left.
+const (
+	idleMaskBytes  = 32 << 20
+	idleMaskFrames = 8
+)
 
 func (b *Builder) prepare(in *Instance, m scene.Affine, c *clip) bool {
 	b.preparedMask = 0
@@ -113,8 +116,8 @@ func (b *Builder) clipTexture(c *clip, shapes []scene.ClipShape) uintptr {
 	return c.maskTexture
 }
 
-// dropIdleMasks drops the least recently used masks this frame didn't use
-// beyond idle bytes of them.
+// dropIdleMasks drops masks not reused for a few frames, and the least
+// recently used others beyond idle bytes of them.
 func (b *Builder) dropIdleMasks(idle int) {
 	slices.SortFunc(b.maskSlots, func(x, y clipMaskSlot) int { return cmp.Compare(y.frame, x.frame) })
 	for i := range b.maskSlots {
@@ -122,7 +125,7 @@ func (b *Builder) dropIdleMasks(idle int) {
 		if m.frame == b.frame {
 			continue
 		}
-		if idle -= len(m.image.Pix); idle < 0 {
+		if idle -= len(m.image.Pix); idle < 0 || b.frame-m.frame >= idleMaskFrames {
 			clear(b.maskSlots[i:])
 			b.maskSlots = b.maskSlots[:i]
 			return

@@ -430,6 +430,9 @@ func (b *Builder) Build(s *scene.Scene, image func(*scene.Image) uintptr) *scene
 	b.frame++
 	b.clipShapes = b.clipShapes[:0]
 	b.Instances = b.Instances[:0]
+	// Shader batches hold images and uniforms from the scene they drew.
+	// A shorter frame must let the unused tail go too.
+	clear(b.Batches)
 	b.Batches = b.Batches[:0]
 	b.Backdrops = b.Backdrops[:0]
 	b.Stops = b.Stops[:0]
@@ -757,6 +760,10 @@ func (b *Builder) markEnclosing(s *scene.Scene) {
 
 // Release frees the retained clipping resources and instance buffers.
 func (b *Builder) Release() { *b = Builder{} }
+
+// Idle releases masks left by previous frames without discarding those
+// the displayed frame uses. Resuming a view can rasterize them again.
+func (b *Builder) Idle() { b.dropIdleMasks(0) }
 
 // add appends an instance within the current clip, starting a batch when
 // the scissor rectangle or the image changes, or after an effect's.

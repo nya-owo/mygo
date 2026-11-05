@@ -70,6 +70,9 @@ func (f *TranslationFolder) Fold(s *Scene) *Scene {
 }
 
 func (f *TranslationFolder) fold(s *Scene) *Scene {
+	if s == &f.s {
+		return s // the folder's own output is already folded
+	}
 	first := -1
 	for i := range s.Ops {
 		if folds(s, &s.Ops[i]) {
@@ -78,7 +81,15 @@ func (f *TranslationFolder) fold(s *Scene) *Scene {
 		}
 	}
 	if first < 0 {
+		// A scene needing no copy must still release the previous one's
+		// images and effects, including ops outside a shorter frame.
+		f.s = Scene{}
+		clear(f.ops)
+		f.ops = f.ops[:0]
 		return s
+	}
+	if len(f.ops) > len(s.Ops) {
+		clear(f.ops[len(s.Ops):])
 	}
 	f.ops = append(f.ops[:0], s.Ops...)
 	f.s = *s
