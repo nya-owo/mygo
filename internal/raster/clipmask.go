@@ -20,6 +20,13 @@ func ClipMask(dst *scene.Image, clips []scene.ClipShape, area image.Rectangle) *
 	if dst == nil {
 		dst = scene.NewImageRGBA(w, h, make([]byte, 4*w*h))
 	} else if dst.W != w || dst.H != h {
+		// A clip that grows from frame to frame, as a page opening to fill
+		// the window, would take new memory for its mask on every frame:
+		// growing by half again, it takes new memory a few times instead.
+		// Each row writes all its pixels, so the old ones may stay.
+		if need := 4 * w * h; cap(dst.Pix) < need && dst.Pix != nil {
+			dst.Pix = make([]byte, need, max(need, cap(dst.Pix)*3/2))
+		}
 		dst.Resize(w, h)
 	}
 	m := &clipMasker{dst: dst, area: area, clips: make([]maskClip, len(clips))}

@@ -5,6 +5,7 @@ import (
 	"image"
 	"math/rand/v2"
 	"testing"
+	"unsafe"
 
 	"github.com/egoist/mygo/internal/scene"
 )
@@ -89,6 +90,34 @@ func TestClipMaskReusesAndResizesItsImage(t *testing.T) {
 	again := ClipMask(img, clips, image.Rect(0, 0, 60, 40))
 	if again != img || !bytes.Equal(again.Pix, referenceClipMask(clips, image.Rect(0, 0, 60, 40))) {
 		t.Fatal("a reused mask kept stale pixels")
+	}
+}
+
+func TestClipMaskGrowingClipTakesMemoryAFewTimes(t *testing.T) {
+	// A mask growing a little each frame, as Cloudy's Now Playing opening
+	// from the bar to fill the window, took new memory on every frame:
+	// 27 frames took 27 masks of 4 to 9 MB, some 200 MB to collect.
+	var img *scene.Image
+	allocations := 0
+	for i := range 27 {
+		r := scene.Rect{X: float32(200 - 7*i), Y: float32(600 - 22*i), W: float32(1500 + 7*i), H: float32(700 + 22*i)}
+		clips := []scene.ClipShape{{Rect: r, Radii: [4]float32{24, 24, 24, 24}, Continuous: true}}
+		area := image.Rect(int(r.X), int(r.Y), int(r.X+r.W), int(r.Y+r.H))
+		before := img
+		var old *byte
+		if before != nil {
+			old = unsafe.SliceData(before.Pix)
+		}
+		img = ClipMask(img, clips, area)
+		if old != unsafe.SliceData(img.Pix) {
+			allocations++
+		}
+		if i == 26 && !bytes.Equal(img.Pix, referenceClipMask(clips, area)) {
+			t.Fatal("a mask grown into spare room kept stale pixels")
+		}
+	}
+	if allocations > 5 {
+		t.Fatalf("a growing clip took new memory for its mask %d times in 27 frames", allocations)
 	}
 }
 
