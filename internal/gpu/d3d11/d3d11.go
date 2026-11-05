@@ -17,6 +17,7 @@ import (
 	"image"
 	"math"
 	"os"
+	"slices"
 	"syscall"
 	"time"
 	"unsafe"
@@ -1480,11 +1481,60 @@ func (r *Renderer) present(sync uintptr) error {
 		return fmt.Errorf("d3d11: present failed: %#x", uint32(hr))
 	}
 	r.held = r.ctx1 != 0
+	r.trimImages(imageCacheLimit)
 	if r.frame%120 == 0 {
 		r.sweep()
 	}
 	return nil
 }
+
+// imageCacheLimit bounds retained RGBA textures, apart from those needed
+// by the current frame. Live images must survive until drawing completes.
+const imageCacheLimit = 32 << 20
+
+// trimImages drops the least recently drawn images until they fit. An idle
+// window passes zero so unused covers go even when no more frames arrive.
+func (r *Renderer) trimImages(limit int) {
+	var total int
+	for _, t := range r.images {
+		total += t.w * t.h * 4
+	}
+	if total <= limit {
+		return
+	}
+	type entry struct {
+		id uint64
+		t  *texture
+	}
+	var old []entry
+	for id, t := range r.images {
+		if t.lastFrame != r.frame {
+			old = append(old, entry{id, t})
+		}
+	}
+	slices.SortFunc(old, func(a, b entry) int {
+		if a.t.lastFrame < b.t.lastFrame {
+			return -1
+		}
+		if a.t.lastFrame > b.t.lastFrame {
+			return 1
+		}
+		return 0
+	})
+	for _, e := range old {
+		if total <= limit {
+			break
+		}
+		total -= e.t.w * e.t.h * 4
+		free(&e.t.srv)
+		free(&e.t.tex)
+		delete(r.images, e.id)
+	}
+}
+
+// Idle releases textures left by earlier frames without waiting for the
+// frame counter to advance. The displayed frame keeps its own images.
+func (r *Renderer) Idle() { r.trimImages(0) }
 
 // FrameInfo describes the last frame for MYGO_FRAME_STATS.
 func (r *Renderer) FrameInfo() string {

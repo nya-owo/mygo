@@ -510,6 +510,9 @@ func (h *windowHost) idle() {
 		return
 	}
 	h.soft.Release()
+	if g, ok := h.gpu.(interface{ Idle() }); ok {
+		g.Idle()
+	}
 	if s, ok := h.conn.Surface.(platform.IdleSurface); ok {
 		s.Idle()
 	}
