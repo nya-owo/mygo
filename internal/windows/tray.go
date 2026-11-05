@@ -10,6 +10,8 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"log"
+	"time"
 	"unsafe"
 
 	"github.com/egoist/mygo/internal/accelerator"
@@ -68,6 +70,7 @@ type tray struct {
 	tip   string
 	menu  *platform.Menu
 	added bool
+	retry *time.Timer
 	// notification is the id of the notification the icon shows, if any.
 	notification string
 	temporary    bool // added only to show a notification
@@ -117,18 +120,48 @@ func (t *tray) data(flags uint32) notifyIconData {
 	return d
 }
 
+// notifyTray is replaceable in tests: a shell refusal must not look like
+// a registered icon, or prevent a later retry.
+var notifyTray = func(message uintptr, d *notifyIconData) bool {
+	r, _, _ := procShellNotifyIconW.Call(message, uintptr(unsafe.Pointer(d)))
+	return r != 0
+}
+
+func (t *tray) retryAdd() {
+	if t.retry != nil || t.b.appHwnd == 0 {
+		return
+	}
+	t.retry = time.AfterFunc(time.Second, func() {
+		t.b.post(func() {
+			t.retry = nil
+			if t.b.trays[t.id] == t && !t.added {
+				t.add()
+			}
+		})
+	})
+}
+
 func (t *tray) add() {
+	if t.retry != nil {
+		return // bounds queries must not turn a pending retry into a tight loop
+	}
 	d := t.data(0)
-	procShellNotifyIconW.Call(nimAdd, uintptr(unsafe.Pointer(&d)))
-	t.added = true
+	t.added = notifyTray(nimAdd, &d)
+	if !t.added {
+		log.Printf("mygo: cannot add tray icon %d; retrying", t.id)
+		t.retryAdd()
+	}
 }
 
 func (t *tray) update() {
 	if !t.added {
-		return // NewTray adds it as it is
+		return // the queued initial add, or retry, uses its latest image
 	}
 	d := t.data(0)
-	procShellNotifyIconW.Call(nimModify, uintptr(unsafe.Pointer(&d)))
+	if !notifyTray(nimModify, &d) {
+		t.added = false
+		t.add()
+	}
 }
 
 func (t *tray) SetImage(data []byte, template bool) error {
@@ -281,6 +314,10 @@ func (t *tray) rect() (rect, bool) {
 }
 
 func (t *tray) Destroy() {
+	if t.retry != nil {
+		t.retry.Stop()
+		t.retry = nil
+	}
 	if t.added {
 		d := t.data(0)
 		procShellNotifyIconW.Call(nimDelete, uintptr(unsafe.Pointer(&d)))
