@@ -1532,9 +1532,45 @@ func (r *Renderer) trimImages(limit int) {
 	}
 }
 
-// Idle releases textures left by earlier frames without waiting for the
-// frame counter to advance. The displayed frame keeps its own images.
-func (r *Renderer) Idle() { r.trimImages(0) }
+// Idle releases textures left by earlier frames without waiting for more
+// frames. The swap chain keeps the displayed pixels; scratch targets and
+// atlas copies can be made again when the window next draws.
+func (r *Renderer) Idle() {
+	r.trimImages(0)
+	if r.pending {
+		return
+	}
+	if r.ctx != 0 {
+		// Bound views own references too. Invalidate partial drawing so the
+		// next frame restores the state cleared here and draws in full.
+		call(r.ctx, ctxClearState)
+		call(r.ctx, ctxFlush)
+	}
+	r.held = false
+	r.b.Idle()
+	r.sweep()
+	for id, t := range r.canvases {
+		if t.lastFrame != r.frame {
+			freeCanvas(t)
+			delete(r.canvases, id)
+		} else {
+			t.b.Idle()
+		}
+	}
+	for _, t := range []*texture{&r.mask, &r.color, &r.grab, &r.backdrop[0], &r.backdrop[1], &r.blurTmp[0], &r.blurTmp[1]} {
+		free(&t.rtv)
+		free(&t.srv)
+		free(&t.tex)
+		*t = texture{}
+	}
+	for i := range r.blurred {
+		t := &r.blurred[i]
+		free(&t.rtv)
+		free(&t.srv)
+		free(&t.tex)
+	}
+	r.blurred = nil
+}
 
 // FrameInfo describes the last frame for MYGO_FRAME_STATS.
 func (r *Renderer) FrameInfo() string {
