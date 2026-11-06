@@ -105,6 +105,8 @@ type wasapiDevice struct {
 	frames                     uint32 // the client's buffer
 	id                         string // the device's endpoint ID
 	checked                    time.Time
+	want                       string // the output asked for, "" for the default
+	fellBack                   bool   // the default, while the one asked for is gone
 }
 
 // defaultID returns the endpoint ID of the default output.
@@ -137,32 +139,56 @@ func openDevice(ahead time.Duration) (device, int, error) {
 		}
 		comInitialized = true
 	}
-	d := &wasapiDevice{}
-	if err := d.open(ahead); err != nil {
+	// The output asked for, or the default, which it falls back to while
+	// the one asked for is gone.
+	moved.Store(false)
+	want := chosenOutput()
+	d := &wasapiDevice{want: want}
+	err := d.open(ahead, want)
+	if err != nil && want != "" {
+		d.close()
+		d = &wasapiDevice{want: want, fellBack: true}
+		err = d.open(ahead, "")
+	}
+	if err != nil {
 		d.close()
 		return nil, 0, err
 	}
 	return d, windowsFrames, nil
 }
 
-func (d *wasapiDevice) open(ahead time.Duration) error {
+// open opens the output of the endpoint ID want, or the default for "".
+func (d *wasapiDevice) open(ahead time.Duration, want string) error {
 	if hr, _, _ := procCoCreateInstance.Call(uintptr(unsafe.Pointer(&clsidMMDeviceEnumerator)), 0, clsctxAll,
 		uintptr(unsafe.Pointer(&iidIMMDeviceEnumerator)), uintptr(unsafe.Pointer(&d.enumerator))); failed(hr) {
 		return hresult("CoCreateInstance(MMDeviceEnumerator)", hr)
 	}
 	var dev uintptr
-	if hr := comCall(d.enumerator, 4, eRender, eConsole, uintptr(unsafe.Pointer(&dev))); failed(hr) {
-		if uint32(hr) == 0x80070490 { // E_NOTFOUND
-			return errors.New("audio: no audio output")
+	if want != "" {
+		id, _ := syscall.UTF16PtrFromString(want)
+		if hr := comCall(d.enumerator, 5, uintptr(unsafe.Pointer(id)), uintptr(unsafe.Pointer(&dev))); failed(hr) {
+			return hresult("GetDevice", hr)
 		}
-		return hresult("GetDefaultAudioEndpoint", hr)
+		defer release(dev)
+		var state uint32
+		if hr := comCall(dev, 6, uintptr(unsafe.Pointer(&state))); failed(hr) || state != deviceStateActive {
+			return errors.New("audio: the output is not there")
+		}
+		d.id = want
+	} else {
+		if hr := comCall(d.enumerator, 4, eRender, eConsole, uintptr(unsafe.Pointer(&dev))); failed(hr) {
+			if uint32(hr) == 0x80070490 { // E_NOTFOUND
+				return errors.New("audio: no audio output")
+			}
+			return hresult("GetDefaultAudioEndpoint", hr)
+		}
+		defer release(dev)
+		id, err := defaultID(d.enumerator)
+		if err != nil {
+			return err
+		}
+		d.id = id
 	}
-	defer release(dev)
-	id, err := defaultID(d.enumerator)
-	if err != nil {
-		return err
-	}
-	d.id = id
 	if hr := comCall(dev, 3, uintptr(unsafe.Pointer(&iidIAudioClient)), clsctxAll, 0, uintptr(unsafe.Pointer(&d.client))); failed(hr) {
 		return hresult("IMMDevice.Activate", hr)
 	}
@@ -229,12 +255,24 @@ func (d *wasapiDevice) write(samples []float32) error {
 	if hr := comCall(d.render, 4, uintptr(n), 0); failed(hr) {
 		return hresult("IAudioRenderClient.ReleaseBuffer", hr)
 	}
+	// Another output asked for (SetOutput) opens at once.
+	if moved.Load() {
+		return errDefaultDeviceChanged
+	}
 	// The default output changing (headphones plugged in, a choice in
-	// Settings) moves a shared stream nowhere: open the new one.
+	// Settings) moves a shared stream nowhere: open the new one. An output
+	// asked for stays, and one that was gone opens again once it is back.
 	if time.Since(d.checked) > 500*time.Millisecond {
 		d.checked = time.Now()
-		if id, err := defaultID(d.enumerator); err != nil || id != d.id {
-			return errDefaultDeviceChanged
+		switch {
+		case d.want == "":
+			if id, err := defaultID(d.enumerator); err != nil || id != d.id {
+				return errDefaultDeviceChanged
+			}
+		case d.fellBack:
+			if outputActive(d.enumerator, d.want) {
+				return errDefaultDeviceChanged
+			}
 		}
 	}
 	return nil
