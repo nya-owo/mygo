@@ -476,7 +476,69 @@ func cleanUpdateLeftovers() {
 
 // httpGet fetches a URL over HTTPS (or plain HTTP from the loopback
 // interface, for tests).
+//
+// A URL on GitHub it cannot reach, as from networks that block it, it
+// fetches through each of the mirrors set (SetMirrors) in turn: what it
+// fetches is checked against the app's key all the same, so a mirror only
+// carries the bytes, and need not be trusted.
 func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+	body, err := httpGetOnce(ctx, rawURL)
+	if err == nil || ctx.Err() != nil || !onGitHub(rawURL) {
+		return body, err
+	}
+	for _, prefix := range mirrorList() {
+		if b, merr := httpGetOnce(ctx, prefix+rawURL); merr == nil {
+			return b, nil
+		}
+		if ctx.Err() != nil {
+			break
+		}
+	}
+	return nil, err
+}
+
+// mirrors are the prefixes a GitHub URL is fetched through when GitHub
+// cannot be reached.
+var mirrors atomic.Pointer[[]string]
+
+// SetMirrors has updates fetched through each of prefixes in turn, as
+// "https://mirror.example/" + the GitHub URL, when GitHub cannot be
+// reached, after a few seconds of trying. The updates are verified with
+// the app's key whatever they came through.
+func (u *UpdaterModule) SetMirrors(prefixes ...string) {
+	p := append([]string(nil), prefixes...)
+	mirrors.Store(&p)
+}
+
+func mirrorList() []string {
+	if p := mirrors.Load(); p != nil {
+		return *p
+	}
+	return nil
+}
+
+// onGitHub reports whether rawURL is one of GitHub's, as a release's.
+func onGitHub(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	h := u.Hostname()
+	return h == "github.com" || h == "api.github.com" || strings.HasSuffix(h, ".githubusercontent.com")
+}
+
+// updateClient gives up on a server that does not answer within seconds,
+// so that a mirror is tried while the listener still waits, and waits as
+// long as it takes for the bytes once they come.
+var updateClient = &http.Client{Transport: &http.Transport{
+	Proxy:                 http.ProxyFromEnvironment,
+	DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ResponseHeaderTimeout: 15 * time.Second,
+	ForceAttemptHTTP2:     true,
+}}
+
+func httpGetOnce(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, err
@@ -492,7 +554,7 @@ func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
 	// answers 400 to a User-Agent with bytes outside ASCII, as 云音乐, for
 	// every file its CDN has not cached yet.
 	req.Header.Set("User-Agent", "mygo-updater")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := updateClient.Do(req)
 	if err != nil {
 		return nil, err
 	}
