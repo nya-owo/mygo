@@ -746,7 +746,7 @@ func (rt *engine) next() {
 	case moving && rt.host.occluded():
 		rt.held = true
 	case rt.animating:
-		rt.pace(capRate(0))
+		rt.pace(0)
 		rt.host.requestFrame()
 	case rt.repainting:
 		rt.redraw = true
@@ -754,7 +754,7 @@ func (rt *engine) next() {
 		if rt.repaintFull {
 			fps = 0
 		}
-		rt.pace(capRate(fps))
+		rt.pace(fps)
 		rt.host.requestFrame()
 	case !rt.repaintAt.IsZero():
 		rt.pace(0)
@@ -794,9 +794,7 @@ func (rt *engine) pace(fps float32) {
 // early at most, as refreshes come a little late or early.
 func (rt *engine) paceSkips() bool {
 	hz := rt.host.refreshRate()
-	// Frames built anew are paced only under a most frames a second the
-	// app set (SetMaxFrameRate): else they come at each refresh.
-	if !rt.redraw && maxFrameRate() <= 0 || rt.paceEvery <= 1 || hz <= 0 || rt.pacedAt.IsZero() {
+	if !rt.redraw || rt.paceEvery <= 1 || hz <= 0 || rt.pacedAt.IsZero() {
 		return false
 	}
 	due := time.Duration((float32(rt.paceEvery) - 0.5) * float32(time.Second) / hz)
