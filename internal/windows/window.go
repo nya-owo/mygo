@@ -478,7 +478,7 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 			return w.frameCalcSize(wp, lp), true
 		}
 	case wmEraseBkgnd:
-		if w.bgBrush != 0 && w.vibrancy == "" {
+		if w.bgBrush != 0 && !w.material() {
 			var r rect
 			procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&r)))
 			procFillRect.Call(wp, uintptr(unsafe.Pointer(&r)), w.bgBrush)
@@ -532,7 +532,7 @@ func (w *window) sized(kind uintptr) {
 	if kind != sizeMinimized {
 		w.layoutControls()
 	}
-	if w.vibrancy != "" && kind != sizeMinimized {
+	if w.material() && kind != sizeMinimized {
 		w.extendGlass(false)
 	}
 	switch kind {
@@ -1096,7 +1096,7 @@ func (w *window) applyWebViewBackground() {
 	defer release(ctl2)
 	var c uint32 = 0xFFFFFFFF // opaque white: A, R, G, B bytes
 	switch {
-	case w.vibrancy != "":
+	case w.material():
 		c = 0
 	case w.opts.Transparent && (w.bg == nil || !w.noRedirect):
 		c = 0
@@ -1127,7 +1127,7 @@ func (w *window) updateLayered() {
 
 func (w *window) SetHasShadow(v bool) {
 	w.shadow = v
-	if !w.captionless() || w.vibrancy != "" {
+	if !w.captionless() || w.material() {
 		return
 	}
 	m := margins{}
@@ -1217,19 +1217,27 @@ func (w *window) SetVibrancy(material string) {
 	backdrop := backdropFor(material)
 	w.extendGlass(true)
 	procDwmSetWindowAttribute.Call(w.hwnd, dwmwaSystemBackdropType, uintptr(unsafe.Pointer(&backdrop)), 4)
-	if material == "" && w.captionless() && w.shadow {
+	if !w.material() && w.captionless() && w.shadow {
 		w.SetHasShadow(true)
 	}
 	w.withWebView(w.applyWebViewBackground)
 	procInvalidateRect(w.hwnd)
 }
 
+// material reports whether the window has a material DWM can draw. Before
+// Windows 11 22H2 it draws none, and a frame extended over the window
+// only shows the frame's own color: on Windows 10 the borders that resize
+// the window, left, right and below, which are otherwise invisible, turn
+// white, in the dark too. Such a window is drawn as one without a
+// material.
+func (w *window) material() bool { return w.vibrancy != "" && systemBackdrops() }
+
 // extendGlass extends the frame where the material shows, behind the
 // page: over the whole client area, or nowhere without a material. With
 // always it extends the frame even when its extension has not changed.
 func (w *window) extendGlass(always bool) {
 	m := margins{}
-	if w.vibrancy != "" {
+	if w.material() {
 		var r rect
 		procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&r)))
 		m = glassMargins(w.glassFromBottom(), r.Bottom-r.Top)
