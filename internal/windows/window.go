@@ -402,6 +402,10 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 		w.sendIconicThumbnail(lp)
 		return 0, true
 	}
+	if m == wmDwmSendIconicLivePreviewBitmap && w.thumbnail != nil {
+		w.sendLivePreview()
+		return 0, true
+	}
 	if m == w.b.taskbarButtonCreated && m != 0 {
 		// A new button, which has no thumbnail toolbar yet.
 		w.buttonCreated, w.thumbsAdded = true, false
