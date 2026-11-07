@@ -270,10 +270,6 @@ type canvasTexture struct {
 
 // Renderer draws scenes into a window.
 type Renderer struct {
-	// interval is how many of the display's refreshes each frame shows
-	// for, 1 to 4: the most frames a second an app asked for, which the
-	// display paces evenly where a timer would not.
-	interval uintptr
 	hwnd      uintptr
 	device    uintptr
 	ctx       uintptr
@@ -836,7 +832,7 @@ func (r *Renderer) Render(s *scene.Scene) error {
 	// composition, and waits until the compositor shows it: the window
 	// takes its next size, as the user drags its border, with the frame of
 	// that size, rather than show older frames stretched to it.
-	sync := max(r.interval, 1)
+	sync := uintptr(1)
 	if resized {
 		sync = 0
 	} else if r.presentLater != nil && !r.lat.ready() {
@@ -1614,10 +1610,4 @@ func meets(sc gpu.Scissor, areas []gpu.Scissor) bool {
 		}
 	}
 	return false
-}
-
-// SetPresentInterval has each frame show for n of the display's refreshes,
-// 1 to 4, for an app that asked for fewer frames than the display shows.
-func (r *Renderer) SetPresentInterval(n int) {
-	r.interval = uintptr(min(max(n, 1), 4))
 }
