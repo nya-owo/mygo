@@ -314,6 +314,10 @@ type Window struct {
 	// about to be. Main thread only.
 	html *htmlDocument
 
+	// thumbClicks are the Click functions of the thumbnail toolbar's
+	// buttons (SetThumbButtons). Main thread only.
+	thumbClicks []func()
+
 	mu                sync.Mutex
 	openHandler       func(WindowOpenRequest) *WindowOptions
 	permissionHandler func(PermissionRequest) bool
@@ -1139,6 +1143,43 @@ func (w *Window) FlashFrame(flash bool) {
 	w.do(func(n platform.Window) { n.FlashFrame(flash) })
 }
 
+// ThumbButton is a button of the toolbar under the window's thumbnail,
+// which Windows shows as the pointer rests on its taskbar button, as media
+// players have for playing, pausing and skipping.
+type ThumbButton struct {
+	// Icon is a PNG image, square: Windows draws it 16 pixels across at
+	// 100% scale, more at higher scales, so a larger image stays sharp.
+	Icon []byte
+	// Tooltip shows as the pointer rests on the button.
+	Tooltip string
+	// Disabled draws the button dimmed, and it takes no clicks.
+	Disabled bool
+	// Click is called on a click, on the main thread.
+	Click func()
+}
+
+// SetThumbButtons sets the buttons under the window's taskbar thumbnail
+// (Windows), at most seven; nil removes them. Calling it again with the
+// same number of buttons changes them in place, as a play button turning
+// into a pause button. Other platforms have no such toolbar and ignore it.
+func (w *Window) SetThumbButtons(buttons []ThumbButton) {
+	if len(buttons) > platform.MaxThumbButtons {
+		buttons = buttons[:platform.MaxThumbButtons]
+	}
+	native := make([]platform.ThumbButton, len(buttons))
+	clicks := make([]func(), len(buttons))
+	for i, b := range buttons {
+		native[i] = platform.ThumbButton{Icon: b.Icon, Tooltip: b.Tooltip, Disabled: b.Disabled}
+		clicks[i] = b.Click
+	}
+	onMain(func() {
+		w.thumbClicks = clicks
+		if w.native != nil {
+			w.native.SetThumbButtons(native)
+		}
+	})
+}
+
 // SetSkipTaskbar hides the window from the taskbar, or shows it there again
 // (Linux, Windows). See WindowOptions.SkipTaskbar.
 func (w *Window) SetSkipTaskbar(v bool) {
@@ -1787,6 +1828,12 @@ func (h *windowHandler) Blurred() {
 func (h *windowHandler) MenuItemClicked(id int) {
 	if h.w.native != nil {
 		menuItemClicked(id, h.w)
+	}
+}
+
+func (h *windowHandler) ThumbButtonClicked(i int) {
+	if i >= 0 && i < len(h.w.thumbClicks) && h.w.thumbClicks[i] != nil {
+		h.w.thumbClicks[i]()
 	}
 }
 

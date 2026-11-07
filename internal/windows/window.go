@@ -73,6 +73,13 @@ type window struct {
 		value float64
 	}
 	icons [2]uintptr // small and big, from SetIcon
+	// buttonCreated is set once Explorer made the taskbar button; thumbs
+	// are the buttons of its thumbnail toolbar (thumbbar.go), with their
+	// icons, and thumbsAdded whether the toolbar has them.
+	buttonCreated bool
+	thumbs        []platform.ThumbButton
+	thumbIcons    []uintptr
+	thumbsAdded   bool
 	// surface shows the content MyGo draws, in place of the webview.
 	surface *surface
 	// webViews are the web views under the surface (webview_embed.go), and
@@ -389,7 +396,10 @@ func (w *window) monitor() uintptr {
 // message handles a window message; ok false lets DefWindowProc run.
 func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 	if m == w.b.taskbarButtonCreated && m != 0 {
+		// A new button, which has no thumbnail toolbar yet.
+		w.buttonCreated, w.thumbsAdded = true, false
 		w.applyTaskbar()
+		w.applyThumbs()
 		return 0, true
 	}
 	if w.opts.Flyout != nil {
@@ -492,6 +502,9 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 		}
 		return 0, false
 	case wmCommand:
+		if w.thumbClicked(wp) {
+			return 0, true
+		}
 		if hiword(wp) == 0 && lp == 0 { // a menu item
 			w.b.menuCommand(loword(wp), w)
 			return 0, true
@@ -757,6 +770,8 @@ func (w *window) cleanup() {
 		w.bgBrush = 0
 	}
 	w.freeIcons()
+	destroyIcons(w.thumbIcons)
+	w.thumbIcons = nil
 	delete(w.b.windows, w.hwnd)
 }
 

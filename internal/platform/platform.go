@@ -484,6 +484,10 @@ type Window interface {
 	// launcher entry: state is "" (none), "normal", "indeterminate",
 	// "paused" or "error", value between 0 and 1.
 	SetProgressBar(state string, value float64)
+	// SetThumbButtons sets the buttons under the window's taskbar thumbnail
+	// (Windows), at most MaxThumbButtons; nil removes them. A click is
+	// reported by WindowHandler.ThumbButtonClicked with the button's index.
+	SetThumbButtons(buttons []ThumbButton)
 	FlashFrame(flash bool)
 	SetSkipTaskbar(v bool)
 	SetVisibleOnAllWorkspaces(v bool)
@@ -639,6 +643,9 @@ type WindowHandler interface {
 	// MenuItemClicked reports an item chosen from this window's menu bar
 	// or context menu, even while the menu has focus instead of the window.
 	MenuItemClicked(id int)
+	// ThumbButtonClicked reports a click on the button at index i of
+	// those SetThumbButtons set.
+	ThumbButtonClicked(i int)
 	Resized()
 	Moved()
 	Minimized()
@@ -755,6 +762,16 @@ type SchemeBodyWriter interface {
 }
 
 // MenuItemType is the kind of a menu item.
+// ThumbButton is a button of a taskbar thumbnail's toolbar (Windows).
+type ThumbButton struct {
+	Icon     []byte // a PNG image
+	Tooltip  string
+	Disabled bool
+}
+
+// MaxThumbButtons is how many buttons a thumbnail's toolbar holds.
+const MaxThumbButtons = 7
+
 type MenuItemType int
 
 // Menu item kinds.

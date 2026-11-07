@@ -303,6 +303,9 @@ func (b *Backend) ClickMenuItem(id int) { b.h.MenuItemClicked(id) }
 // ClickMenuItem simulates choosing an item of this window's menu.
 func (w *Window) ClickMenuItem(id int) { w.H.MenuItemClicked(id) }
 
+// ClickThumbButton clicks the button at index i of the thumbnail toolbar.
+func (w *Window) ClickThumbButton(i int) { w.H.ThumbButtonClicked(i) }
+
 func (b *Backend) SetApplicationMenu(m *platform.Menu) {
 	b.mu.Lock()
 	b.appMenu = m
@@ -525,6 +528,8 @@ type Window struct {
 	OnAllWorkspaces bool
 	AutoHidesMenu   bool
 	Icon            []byte
+	// ThumbButtons are the buttons SetThumbButtons set last.
+	ThumbButtons []platform.ThumbButton
 	// RepresentedFile and DocumentEdited are what SetRepresentedFile and
 	// SetDocumentEdited set.
 	RepresentedFile string
@@ -585,8 +590,15 @@ func (w *Window) SetProgressBar(state string, value float64) {
 	w.Progress, w.ProgressValue = state, value
 	w.mu.Unlock()
 }
-func (w *Window) FlashFrame(v bool)                { w.mu.Lock(); w.Flashing = v; w.mu.Unlock() }
-func (w *Window) SetSkipTaskbar(v bool)            { w.mu.Lock(); w.SkipsTaskbar = v; w.mu.Unlock() }
+func (w *Window) FlashFrame(v bool)     { w.mu.Lock(); w.Flashing = v; w.mu.Unlock() }
+func (w *Window) SetSkipTaskbar(v bool) { w.mu.Lock(); w.SkipsTaskbar = v; w.mu.Unlock() }
+
+// SetThumbButtons keeps the buttons in ThumbButtons.
+func (w *Window) SetThumbButtons(b []platform.ThumbButton) {
+	w.mu.Lock()
+	w.ThumbButtons = append([]platform.ThumbButton(nil), b...)
+	w.mu.Unlock()
+}
 func (w *Window) SetVisibleOnAllWorkspaces(v bool) { w.mu.Lock(); w.OnAllWorkspaces = v; w.mu.Unlock() }
 func (w *Window) SetAutoHideMenu(v bool)           { w.mu.Lock(); w.AutoHidesMenu = v; w.mu.Unlock() }
 func (w *Window) SetRepresentedFile(p string)      { w.mu.Lock(); w.RepresentedFile = p; w.mu.Unlock() }

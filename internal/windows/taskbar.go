@@ -74,8 +74,10 @@ func (w *window) SetSkipTaskbar(v bool) {
 	w.skipTaskbar = v
 	if tl := w.b.taskbar(); tl != 0 && !v {
 		comCall(tl, tbAddTab, w.hwnd)
+		w.thumbsAdded = false // a new button
 	}
 	w.applyTaskbar()
+	w.applyThumbs()
 }
 
 func (w *window) FlashFrame(flash bool) {

@@ -990,6 +990,9 @@ func (w *window) FlashFrame(flash bool) {
 // SetSkipTaskbar does nothing: the Dock shows applications, not windows.
 func (w *window) SetSkipTaskbar(bool) {}
 
+// SetThumbButtons does nothing: the Dock has no thumbnail toolbars.
+func (w *window) SetThumbButtons([]platform.ThumbButton) {}
+
 func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 	const canJoinAllSpaces = 1 << 0
 	behavior := uint(sendInt(w.win, "collectionBehavior"))

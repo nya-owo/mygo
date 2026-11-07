@@ -733,6 +733,9 @@ func (w *window) SetProgressBar(state string, value float64) {
 func (w *window) FlashFrame(flash bool) { gtkWindowSetUrgencyHint(w.win, flash) }
 func (w *window) SetSkipTaskbar(v bool) { gtkWindowSetSkipTaskbarHint(w.win, v) }
 
+// SetThumbButtons does nothing: Linux docks have no thumbnail toolbars.
+func (w *window) SetThumbButtons([]platform.ThumbButton) {}
+
 func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 	if v {
 		gtkWindowStick(w.win)
