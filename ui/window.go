@@ -545,6 +545,7 @@ func (h *windowHost) screenWide() bool {
 // already, or another, or Windows' software rasterizer, can draw; when
 // that fails too, frames are drawn in memory until a later try.
 func (h *windowHost) render(s *scene.Scene) bool {
+	h.paceFrames()
 	for try := 0; h.gpu != nil; try++ {
 		err := h.gpu.Render(s)
 		if err == nil {
@@ -911,4 +912,24 @@ func (h *windowHost) popupMenu(m *platform.Menu, x, y float32, chosen func(int))
 	if h.conn.PopupMenu != nil {
 		h.conn.PopupMenu(m, float64(x), float64(y), chosen)
 	}
+}
+
+// presentPacer is a GPU renderer that shows each frame for so many of the
+// display's refreshes (Direct3D's present interval).
+type presentPacer interface{ SetPresentInterval(n int) }
+
+// paceFrames has the renderer show each frame for as many refreshes as
+// keep the window to the most frames a second set (SetMaxFrameRate): the
+// display paces them, evenly, rather than a timer, whose frames fall
+// between refreshes unevenly and make what moves stutter.
+func (h *windowHost) paceFrames() {
+	p, ok := h.gpu.(presentPacer)
+	if !ok {
+		return
+	}
+	n := 1
+	if limit, hz := maxFrameRate(), h.refreshRate(); limit > 0 && hz > 0 {
+		n = int(hz/limit + 0.05)
+	}
+	p.SetPresentInterval(n)
 }
