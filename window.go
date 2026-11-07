@@ -1180,6 +1180,15 @@ func (w *Window) SetThumbButtons(buttons []ThumbButton) {
 	})
 }
 
+// SetThumbnail shows a PNG or JPEG image as the window's thumbnail over its
+// taskbar button (Windows), in place of the window, as media players show
+// the cover of what plays; nil shows the window again. Windows fits the
+// image in the space it has, keeping its proportions: a square of 200
+// pixels or more stays sharp. Other platforms ignore it.
+func (w *Window) SetThumbnail(png []byte) {
+	w.do(func(n platform.Window) { n.SetThumbnail(png) })
+}
+
 // SetSkipTaskbar hides the window from the taskbar, or shows it there again
 // (Linux, Windows). See WindowOptions.SkipTaskbar.
 func (w *Window) SetSkipTaskbar(v bool) {

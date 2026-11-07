@@ -128,6 +128,7 @@ func (w *window) SetProgressBar(string, float64)             {}
 func (w *window) FlashFrame(bool)                            {}
 func (w *window) SetSkipTaskbar(bool)                        {}
 func (w *window) SetThumbButtons([]platform.ThumbButton)     {}
+func (w *window) SetThumbnail([]byte)                        {}
 func (w *window) SetVisibleOnAllWorkspaces(bool)             {}
 func (w *window) SetIcon([]byte) error                       { return errUnsupported }
 func (w *window) SetMenu(*platform.Menu)                     {}

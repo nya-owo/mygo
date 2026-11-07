@@ -735,6 +735,7 @@ func (w *window) SetSkipTaskbar(v bool) { gtkWindowSetSkipTaskbarHint(w.win, v) 
 
 // SetThumbButtons does nothing: Linux docks have no thumbnail toolbars.
 func (w *window) SetThumbButtons([]platform.ThumbButton) {}
+func (w *window) SetThumbnail([]byte)                    {}
 
 func (w *window) SetVisibleOnAllWorkspaces(v bool) {
 	if v {

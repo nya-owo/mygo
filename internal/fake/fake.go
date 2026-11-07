@@ -303,6 +303,9 @@ func (b *Backend) ClickMenuItem(id int) { b.h.MenuItemClicked(id) }
 // ClickMenuItem simulates choosing an item of this window's menu.
 func (w *Window) ClickMenuItem(id int) { w.H.MenuItemClicked(id) }
 
+// SetThumbnail keeps the image in Thumbnail.
+func (w *Window) SetThumbnail(png []byte) { w.mu.Lock(); w.Thumbnail = png; w.mu.Unlock() }
+
 // ClickThumbButton clicks the button at index i of the thumbnail toolbar.
 func (w *Window) ClickThumbButton(i int) { w.H.ThumbButtonClicked(i) }
 
@@ -530,6 +533,8 @@ type Window struct {
 	Icon            []byte
 	// ThumbButtons are the buttons SetThumbButtons set last.
 	ThumbButtons []platform.ThumbButton
+	// Thumbnail is the image SetThumbnail set last.
+	Thumbnail []byte
 	// RepresentedFile and DocumentEdited are what SetRepresentedFile and
 	// SetDocumentEdited set.
 	RepresentedFile string

@@ -488,6 +488,9 @@ type Window interface {
 	// (Windows), at most MaxThumbButtons; nil removes them. A click is
 	// reported by WindowHandler.ThumbButtonClicked with the button's index.
 	SetThumbButtons(buttons []ThumbButton)
+	// SetThumbnail shows a PNG or JPEG image as the window's taskbar thumbnail in
+	// place of the window (Windows); nil shows the window again.
+	SetThumbnail(png []byte)
 	FlashFrame(flash bool)
 	SetSkipTaskbar(v bool)
 	SetVisibleOnAllWorkspaces(v bool)

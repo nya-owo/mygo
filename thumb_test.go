@@ -30,3 +30,16 @@ func TestThumbButtons(t *testing.T) {
 		t.Error("buttons not removed")
 	}
 }
+
+// The thumbnail image reaches the window, and nil takes it away.
+func TestThumbnail(t *testing.T) {
+	w, fw := testWindow(t, WindowOptions{})
+	w.SetThumbnail([]byte("png"))
+	if got := onMainValue(func() string { return string(fw.Thumbnail) }); got != "png" {
+		t.Errorf("thumbnail %q", got)
+	}
+	w.SetThumbnail(nil)
+	if onMainValue(func() bool { return fw.Thumbnail != nil }) {
+		t.Error("thumbnail not removed")
+	}
+}

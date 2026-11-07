@@ -80,6 +80,9 @@ type window struct {
 	thumbs        []platform.ThumbButton
 	thumbIcons    []uintptr
 	thumbsAdded   bool
+	// thumbnail is the image shown as the taskbar thumbnail in place of
+	// the window (iconicthumb.go), nil for the window.
+	thumbnail iconicImage
 	// surface shows the content MyGo draws, in place of the webview.
 	surface *surface
 	// webViews are the web views under the surface (webview_embed.go), and
@@ -395,6 +398,10 @@ func (w *window) monitor() uintptr {
 
 // message handles a window message; ok false lets DefWindowProc run.
 func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
+	if m == wmDwmSendIconicThumbnail {
+		w.sendIconicThumbnail(lp)
+		return 0, true
+	}
 	if m == w.b.taskbarButtonCreated && m != 0 {
 		// A new button, which has no thumbnail toolbar yet.
 		w.buttonCreated, w.thumbsAdded = true, false
