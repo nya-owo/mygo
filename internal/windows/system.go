@@ -485,6 +485,12 @@ func (b *Backend) applyWindowTheme(w *window) {
 		dark = 1
 	}
 	procDwmSetWindowAttribute.Call(w.hwnd, dwmwaUseImmersiveDarkMode, uintptr(unsafe.Pointer(&dark)), 4)
+	// Windows 10 draws the frame anew in the appearance only once the
+	// window is activated again: until then a window turned dark kept
+	// white borders, and one turned light black ones.
+	if !windows11() {
+		procSetWindowPos.Call(w.hwnd, 0, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged)
+	}
 	if w.caption != nil {
 		w.caption.paint()
 	}

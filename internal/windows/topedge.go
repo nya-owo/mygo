@@ -2,7 +2,11 @@
 
 package windows
 
-import "unsafe"
+import (
+	"os"
+	"sync"
+	"unsafe"
+)
 
 // A window without a caption, frameless or with a hidden title bar, has no
 // border at the top: frameCalcSize keeps the left, right and bottom ones,
@@ -36,7 +40,35 @@ func (w *window) newTopEdge() {
 	procSetLayeredWindowAttributes.Call(e, 0, 255, lwaAlpha)
 	w.topEdge = e
 	w.b.topEdges[e] = w
+	if !clientFrame() {
+		return
+	}
+	for i := range w.sideEdges {
+		s := createWindow(wsExLayered|wsExNoRedirect, captionClass, "", wsChild|wsClipSiblings, 0, 0, 0, 0, w.hwnd)
+		if s == 0 {
+			continue
+		}
+		procSetLayeredWindowAttributes.Call(s, 0, 255, lwaAlpha)
+		w.sideEdges[i] = s
+		w.b.topEdges[s] = w
+	}
 }
+
+// clientFrame reports whether a window without a caption gives the client
+// area its left, right and bottom borders too, which edges like the top
+// one then resize from. On Windows 10 DWM drew those borders in the
+// appearance, white or black, beside the content, which changed color
+// apart from them: a page in the cover's colors, or the content turned
+// dark before DWM drew the frame again. MYGO_CLIENT_FRAME=1 has Windows
+// 11 do the same, to try it there.
+var clientFrame = sync.OnceValue(func() bool {
+	return !windows11() || os.Getenv("MYGO_CLIENT_FRAME") == "1"
+})
+
+// sideBorder is how wide the left, right and bottom edges are over the
+// content: narrower than the frame, so that they take less of what is at
+// the window's edges, a scroll bar among them.
+func sideBorder(dpi int) int32 { return toPx(5, dpi) }
 
 // layoutTopEdge puts the top edge along the top of the window, above the
 // webview or the surface, up to the window controls, or hides it while
@@ -59,15 +91,35 @@ func (w *window) layoutTopEdge() {
 	}
 	// HWND_TOP (0): above the webview's window and the surface's.
 	procSetWindowPos.Call(w.topEdge, 0, 0, 0, uintptr(max(width, 0)), uintptr(resizeBorder(dpi)), swpNoActivate|show)
+	b := sideBorder(dpi)
+	at := [3]rect{
+		{Left: 0, Top: 0, Right: b, Bottom: r.Bottom},
+		{Left: r.Right - b, Top: 0, Right: r.Right, Bottom: r.Bottom},
+		{Left: 0, Top: r.Bottom - b, Right: r.Right, Bottom: r.Bottom},
+	}
+	for i, e := range w.sideEdges {
+		if e == 0 {
+			continue
+		}
+		p := at[i]
+		procSetWindowPos.Call(e, 0, uintptr(p.Left), uintptr(p.Top), uintptr(max(p.Right-p.Left, 0)), uintptr(max(p.Bottom-p.Top, 0)), swpNoActivate|show)
+	}
 }
 
 // topEdgeMessage handles a message of the top edge's window; ok false lets
 // DefWindowProc run.
-func (w *window) topEdgeMessage(m uint32, wp, lp uintptr) (uintptr, bool) {
+func (w *window) topEdgeMessage(hwnd uintptr, m uint32, wp, lp uintptr) (uintptr, bool) {
 	switch m {
 	case wmNCHitTest:
 		pt := point{getXParam(lp), getYParam(lp)}
 		procScreenToClient.Call(w.hwnd, uintptr(unsafe.Pointer(&pt)))
+		for i, e := range w.sideEdges {
+			if e == hwnd {
+				var client rect
+				procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&client)))
+				return sideEdgeHit(i, pt.X, pt.Y, client.Right, client.Bottom, toPx(resizeCornerSize, dpiOf(w.hwnd))), true
+			}
+		}
 		var edge, client rect
 		procGetClientRect.Call(w.topEdge, uintptr(unsafe.Pointer(&edge)))
 		procGetClientRect.Call(w.hwnd, uintptr(unsafe.Pointer(&client)))
@@ -94,6 +146,33 @@ func topEdgeHit(x, edgeWidth, clientWidth, corner int32) uintptr {
 		return htTopRight
 	}
 	return htTop
+}
+
+// sideEdgeHit returns the hit-test code at x, y, in pixels of the client
+// area width by height, on the left (0), right (1) or bottom (2) edge: the
+// corners within corner pixels of them, the side elsewhere.
+func sideEdgeHit(side int, x, y, width, height, corner int32) uintptr {
+	switch side {
+	case 0, 1:
+		top, bottom, mid := uintptr(htTopLeft), uintptr(htBottomLeft), uintptr(htLeft)
+		if side == 1 {
+			top, bottom, mid = htTopRight, htBottomRight, htRight
+		}
+		switch {
+		case y < corner:
+			return top
+		case y >= height-corner:
+			return bottom
+		}
+		return mid
+	}
+	switch {
+	case x < corner:
+		return htBottomLeft
+	case x >= width-corner:
+		return htBottomRight
+	}
+	return htBottom
 }
 
 // resizeBorder is the height of the band along the top edge that resizes the

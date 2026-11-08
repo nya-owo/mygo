@@ -348,7 +348,7 @@ func wndProc(hwnd, m, wp, lp uintptr) uintptr {
 				return r
 			}
 		} else if w := b.topEdges[hwnd]; w != nil {
-			if r, ok := w.topEdgeMessage(uint32(m), wp, lp); ok {
+			if r, ok := w.topEdgeMessage(hwnd, uint32(m), wp, lp); ok {
 				return r
 			}
 		} else if s := b.surfaces[hwnd]; s != nil {

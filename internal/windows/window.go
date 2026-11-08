@@ -62,6 +62,7 @@ type window struct {
 	caption                *captionBar // the controls in its place, nil if they failed
 	buttonsTheme           string      // "light" or "dark" for the controls (SetWindowButtonsTheme), "" as the app
 	topEdge                uintptr     // the window over the top resize border of one without a caption (topedge.go), or 0
+	sideEdges              [3]uintptr  // those over the left, right and bottom ones, where the client area covers them (clientFrame)
 	noRedirect             bool        // no redirection bitmap, for a material behind the page
 	fullScreen             bool
 	reframing              bool     // SetFullScreen is changing the frame
@@ -720,7 +721,7 @@ func (w *window) frameCalcSize(wp, lp uintptr) uintptr {
 		}
 		return 0
 	}
-	if windowLong(w.hwnd, gwlStyle)&wsThickFrame != 0 {
+	if windowLong(w.hwnd, gwlStyle)&wsThickFrame != 0 && !clientFrame() {
 		top := params.Rgrc[0].Top
 		procDefWindowProcW.Call(w.hwnd, wmNCCalcSize, wp, lp)
 		params.Rgrc[0].Top = top
@@ -762,6 +763,11 @@ func (w *window) cleanup() {
 	}
 	if w.topEdge != 0 {
 		delete(w.b.topEdges, w.topEdge)
+	}
+	for _, e := range w.sideEdges {
+		if e != 0 {
+			delete(w.b.topEdges, e)
+		}
 	}
 	if w.controller != 0 {
 		comCall(w.controller, ctlClose)
