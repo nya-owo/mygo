@@ -114,6 +114,7 @@ func (s Scissor) Empty() bool { return s.Right <= s.Left || s.Bottom <= s.Top }
 // Batch is a run of instances that draw with the same scissor rectangle
 // and image.
 type Batch struct {
+	MSDFPage     *scene.Atlas
 	Start, Count int
 	Scissor      Scissor
 	// Image is the renderer's texture of the batch's image, or 0.
@@ -221,6 +222,7 @@ func classOf(in *Instance) (Class, bool) {
 // Builder builds the instances and batches of scenes, reusing its memory
 // from frame to frame.
 type Builder struct {
+	msdfPage  *scene.Atlas
 	Instances []Instance
 	Batches   []Batch
 	Backdrops []scene.Backdrop
@@ -544,6 +546,11 @@ func (b *Builder) Build(s *scene.Scene, image func(*scene.Image) uintptr) *scene
 			for _, g := range s.Glyphs[op.Start:op.End] {
 				a, kind, contrast := s.MaskAtlas, float32(2), s.Text.Contrast
 				switch {
+				case g.MSDF:
+					a, kind = g.MSDFPage, 3
+					if a == nil {
+						a = s.MSDFAtlas
+					}
 				case g.Colored:
 					a, kind = s.ColorAtlas, 3
 				case g.Subpixel:
@@ -565,14 +572,23 @@ func (b *Builder) Build(s *scene.Scene, image func(*scene.Image) uintptr) *scene
 					Color:  straight(g.Color),
 					Params: [4]float32{kind, 0, 0, 1},
 				}
+				if g.MSDF {
+					in.Rect = [4]float32{g.X, g.Y, g.W, g.H}
+					in.Params[1] = 1
+				}
 				if w := b.wideOf(s, g.Wide); w != nil {
 					in.Color = w.Color
 				}
-				if grad && !g.Colored {
+				if grad && !g.Colored && !g.MSDF {
 					in.Color, in.Color2, in.Grad = c1, c2, op.Gradient
 					in.Params[2], in.Params[3] = float32(op.Paint), opacity(op.Opacity)
 				}
+				b.msdfPage = nil
+				if g.MSDF {
+					b.msdfPage = a
+				}
 				b.add(in, 0, op.Transform.Mul(g.Transform))
+				b.msdfPage = nil
 			}
 		case scene.OpEffect:
 			if !op.Rect.Empty() && int(op.Start) < len(s.Effects) && s.Effects[op.Start].Effect != nil {
@@ -669,7 +685,7 @@ func (b *Builder) joinLast() {
 	}
 	fits := area <= joinArea
 	if last := &b.Batches[max(n-2, 0)]; n > 1 && b.joinSmall && fits && last.Scissor == bt.Scissor &&
-		last.ClipMask == bt.ClipMask && last.Opaque == bt.Opaque && last.Effect == nil && bt.Effect == nil && !last.Hole && !bt.Hole &&
+		last.MSDFPage == bt.MSDFPage && last.ClipMask == bt.ClipMask && last.Opaque == bt.Opaque && last.Effect == nil && bt.Effect == nil && !last.Hole && !bt.Hole &&
 		(last.Image == 0 || bt.Image == 0 || last.Image == bt.Image) {
 		if j := last.Classes() | bt.Classes(); j != 1<<last.Class {
 			last.Class, last.Joined = ClassGeneral, j
@@ -778,7 +794,7 @@ func (b *Builder) add(in Instance, image uintptr, m scene.Affine) {
 	class, continuous := b.classOf(&in)
 	n := len(b.Batches)
 	sc := b.batchScissor(cur)
-	same := n > 0 && b.Batches[n-1].Scissor == sc && b.Batches[n-1].Effect == nil && !b.Batches[n-1].Hole &&
+	same := n > 0 && b.Batches[n-1].MSDFPage == b.msdfPage && b.Batches[n-1].Scissor == sc && b.Batches[n-1].Effect == nil && !b.Batches[n-1].Hole &&
 		b.Batches[n-1].Opaque == b.opaque && b.Batches[n-1].ClipMask == b.preparedMask && b.Batches[n-1].Class == class &&
 		!(image != 0 && b.Batches[n-1].Image != 0 && b.Batches[n-1].Image != image)
 	if same {
@@ -787,7 +803,7 @@ func (b *Builder) add(in Instance, image uintptr, m scene.Affine) {
 		b.Batches[n-1].Continuous = b.Batches[n-1].Continuous || continuous
 	} else {
 		b.joinLast()
-		b.Batches = append(b.Batches, Batch{Start: len(b.Instances), Scissor: sc, Image: image, ClipMask: b.preparedMask, Opaque: b.opaque, Class: class, Continuous: continuous})
+		b.Batches = append(b.Batches, Batch{MSDFPage: b.msdfPage, Start: len(b.Instances), Scissor: sc, Image: image, ClipMask: b.preparedMask, Opaque: b.opaque, Class: class, Continuous: continuous})
 		n = len(b.Batches)
 	}
 	if image != 0 {
@@ -1097,7 +1113,7 @@ func (b *Builder) addMaskedEffect(s *scene.Scene, op *scene.Op, fx *scene.Effect
 	if a == nil || fx.Effect.Shader == nil || fx.Effect.Backdrop {
 		return
 	}
-	batch := Batch{Start: len(b.Instances), Scissor: cur.scissor, Effect: fx.Effect, Shader: fx, Uniforms: b.uniformsOf(fx)}
+	batch := Batch{MSDFPage: b.msdfPage, Start: len(b.Instances), Scissor: cur.scissor, Effect: fx.Effect, Shader: fx, Uniforms: b.uniformsOf(fx)}
 	for i, img := range fx.Images {
 		if img != nil && img.W > 0 && img.H > 0 && b.imageTexture != nil {
 			batch.Textures[i] = b.imageTexture(img)
@@ -1164,7 +1180,7 @@ func (b *Builder) addHole(op *scene.Op) {
 		}
 		b.Batches[n-1].Continuous = b.Batches[n-1].Continuous || continuous
 	} else {
-		b.Batches = append(b.Batches, Batch{Start: len(b.Instances), Scissor: cur.scissor, Hole: true, ClipMask: b.preparedMask, Class: class, Continuous: continuous})
+		b.Batches = append(b.Batches, Batch{MSDFPage: b.msdfPage, Start: len(b.Instances), Scissor: cur.scissor, Hole: true, ClipMask: b.preparedMask, Class: class, Continuous: continuous})
 	}
 	b.Instances = append(b.Instances, in)
 	b.Batches[len(b.Batches)-1].Count++

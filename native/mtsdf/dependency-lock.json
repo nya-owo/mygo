@@ -1,0 +1,31 @@
+{
+  "msdfgen": {
+    "version": "1.13.0",
+    "source_url": "https://codeload.github.com/Chlumsky/msdfgen/zip/refs/tags/v1.13",
+    "original_archive_sha256": "E7B9CECB341873245AA77CFB113FC2E546799C308DB25183541B8A9AEFDBC916",
+    "license": "MIT",
+    "local_revision": 3,
+    "patched_core_files": [
+      "core/edge-selectors.h",
+      "core/edge-selectors.cpp"
+    ],
+    "source_manifest_sha256": "203CAB650298826C48389F7230FCE83B87255BE9863434F56B3F14D46690A8B8"
+  },
+  "skia": {
+    "repo": "https://github.com/fonttools/skia",
+    "commit": "a777ad7f829750a44b8fa9f6df4a2d1154abf1ad",
+    "archive_sha256": "D0044921F62BE684D47E0118ABE8AFE73AD2B182A769CB8276B934B5AE3DAFB1",
+    "license": "BSD",
+    "source_subset_files": 230,
+    "source_manifest_sha256": "54C17B5E07A862D6B1108C6508CA40E9095A909E99206596537FAD0C090E7552",
+    "static_source_build": true,
+    "prebuilt_library_used_in_candidate": false
+  },
+  "DLL": {
+    "ABI": 1,
+    "generation_revision": 4,
+    "static_skia": true,
+    "skia_source_files": 230,
+    "build_from": "native/mtsdf source with pinned static Skia subset; DLL SHA belongs in the application release artifact manifest"
+  }
+}

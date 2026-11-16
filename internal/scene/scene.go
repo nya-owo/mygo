@@ -254,7 +254,9 @@ type Glyph struct {
 	Wide uint16
 	// Colored glyphs come from Scene.ColorAtlas, the others from
 	// Scene.MaskAtlas.
-	Colored bool
+	Colored  bool
+	MSDFPage *Atlas
+	MSDF     bool // distance-field source/destination rectangle contract
 	// Subpixel glyphs come from Scene.ColorAtlas too, but hold the
 	// coverage of the red, green and blue subpixels of each pixel
 	// (ClearType), each blending its channel of Color.
@@ -358,6 +360,8 @@ type Scene struct {
 	// premultiplied RGBA bitmaps such as emoji, and the coverage of
 	// subpixel glyphs.
 	MaskAtlas, ColorAtlas *Atlas
+	// MSDFAtlas is a immutable distance-field resource, independent of text.System.
+	MSDFAtlas *Atlas
 	// Canvases are the canvases (NewCanvas) drawn anew for this frame,
 	// which renderers draw before it, whether it shows them or not, while
 	// the atlases their glyphs point at hold them.
@@ -417,11 +421,13 @@ func (s *Scene) eachShown(fn func(*Image)) {
 // Reset empties the scene for another frame, keeping its storage.
 func (s *Scene) Reset(width, height int, color Color) {
 	s.Width, s.Height, s.Clear = width, height, color
+	s.MSDFAtlas = nil // frame-scoped reference; fallback must not retain old resource
 	s.Drawn = image.Point{}
 	// Ops and effects can keep images and effect resources alive beyond
 	// the end of the shorter list the next frame paints.
 	clear(s.Ops)
 	s.Ops = s.Ops[:0]
+	clear(s.Glyphs)
 	s.Glyphs = s.Glyphs[:0]
 	s.Stops = s.Stops[:0]
 	clear(s.Effects)
@@ -437,8 +443,9 @@ var lastImageID atomic.Uint64
 // Image is a bitmap a scene draws. Renderers keep a texture per image and
 // upload it again when its version changes.
 type Image struct {
-	id      uint64
-	version uint64
+	id       uint64
+	version  uint64
+	msdfDeps []MSDFDependency // main-thread canvas resource stamp
 	// W and H are the size in pixels; Pix holds premultiplied RGBA rows of
 	// 4*W bytes.
 	W, H int
@@ -488,7 +495,7 @@ func NewImageRGBA(w, h int, pix []byte) *Image {
 func (m *Image) ID() uint64 { return m.id }
 
 // Version changes whenever the pixels change.
-func (m *Image) Version() uint64 { return m.version }
+func (m *Image) Version() uint64 { m.refreshMSDFDependencies(); return m.version }
 
 // Changed records that Pix was modified.
 func (m *Image) Changed() { m.version++ }

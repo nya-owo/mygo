@@ -115,8 +115,13 @@ func (f *TranslationFolder) fold(s *Scene) *Scene {
 			}
 			for j := op.Start; j < op.End; j++ {
 				g := &f.glyphs[j]
-				g.X = float32(math.Round(float64(g.X))) + x
-				g.Y = float32(math.Round(float64(g.Y))) + y
+				if g.MSDF {
+					g.X += x
+					g.Y += y
+				} else {
+					g.X = float32(math.Round(float64(g.X))) + x
+					g.Y = float32(math.Round(float64(g.Y))) + y
+				}
 			}
 		}
 		if op.Kind == OpFill || op.Kind == OpGlyphs {

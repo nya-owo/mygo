@@ -150,6 +150,7 @@ type bitmap struct {
 // glyphs refer to fonts by pointer: an engine returns the same Font for
 // the same font and size.
 type Font struct {
+	distanceID uint64
 	// Size is the em size in DIPs.
 	Size float32
 	// Ascent, Descent and LineGap are the font's vertical metrics in

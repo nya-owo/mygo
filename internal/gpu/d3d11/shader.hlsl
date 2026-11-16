@@ -109,6 +109,7 @@ struct PSOut {
 
 Texture2D maskTex : register(t0);
 Texture2D colorTex : register(t1);
+Texture2D msdfTex : register(t11); // isolated immutable RGBA distance field
 Texture2D imageTex : register(t2);
 Texture2D clipTex : register(t5);
 SamplerState samp : register(s0);
@@ -511,7 +512,15 @@ PSOut ps(VSOut i) {
 						   i.inner.y, i.radii) *
 			  glyphCov;
 	} else if (kind < 3.5) {
-		res = sampleLocal(colorTex, i.pt.zw, i.widths, i.transform0.w) * i.color.a * glyphCov;
+		if(i.params.y>0.5) {
+uint mw,mh; msdfTex.GetDimensions(mw,mh);
+        float2 mdUV=clamp(i.pt.zw+0.5/float2(mw,mh), i.widths.xy+0.5/float2(mw,mh), i.widths.zw+0.5/float2(mw,mh));
+        float3 md=msdfTex.Sample(samp,mdUV).rgb;
+        float medianV=max(min(md.r,md.g),min(max(md.r,md.g),md.b));
+        float2 screenTex=1.0/max(fwidth(i.pt.zw),float2(1e-8,1e-8));
+        float rangePx=max(0.5*dot(6.0/float2(mw,mh),screenTex),1.0);
+        if(i.params.y>1.5) {res=float4((mdUV-i.widths.xy)/(i.widths.zw-i.widths.xy),0,1);} else {res=premul(i.color)*saturate((medianV-0.5)*rangePx+0.5)*glyphCov;}
+} else {res = sampleLocal(colorTex, i.pt.zw, i.widths, i.transform0.w) * i.color.a * glyphCov;}
 	} else if (kind < 4.5) {
 		res = sampleImage(imageTex, i.pt.zw, i.widths, i.params.z, dtex);
 		if (i.params.y > 0.5) {

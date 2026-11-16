@@ -314,6 +314,9 @@ type Renderer struct {
 	instCap   int
 
 	mask, color texture
+	msdf        texture
+	msdfSource  *scene.Atlas
+	msdfPages   map[*scene.Atlas]*texture // renderer-owned; msdf is a non-owning current-scene alias
 	images      map[uint64]*texture
 	frame       uint64
 	// canvases are the textures canvases are drawn into, and drawing the
@@ -670,6 +673,7 @@ func (r *Renderer) armSettle() {
 
 // Release frees the renderer's GPU objects.
 func (r *Renderer) Release() {
+	r.releaseMSDFPages()
 	r.pending, r.refreshing, r.wake = false, false, nil
 	r.lat.release()
 	r.b.Release()
@@ -746,17 +750,20 @@ func (r *Renderer) syncAtlas(t *texture, a *scene.Atlas, format uint32) error {
 		if err := r.newTexture(t, a.W, a.H, format, a.Pix, a.BPP); err != nil {
 			return err
 		}
+
 		t.gen, t.ver = a.Generation(), a.Version()
 		return nil
 	}
 	rects, full := a.Changes(t.gen, t.ver)
 	if full {
 		call(r.ctx, ctxUpdateSubresource, t.tex, 0, 0, uintptr(unsafe.Pointer(&a.Pix[0])), uintptr(a.W*a.BPP), 0)
+
 	}
 	for _, rc := range rects {
 		b := box{Left: uint32(rc.Min.X), Top: uint32(rc.Min.Y), Front: 0, Right: uint32(rc.Max.X), Bottom: uint32(rc.Max.Y), Back: 1}
 		src := a.Pix[(rc.Min.Y*a.W+rc.Min.X)*a.BPP:]
 		call(r.ctx, ctxUpdateSubresource, t.tex, 0, uintptr(unsafe.Pointer(&b)), uintptr(unsafe.Pointer(&src[0])), uintptr(a.W*a.BPP), 0)
+
 	}
 	t.ver = a.Version()
 	return nil
@@ -868,6 +875,7 @@ func (r *Renderer) drawFrame(s *scene.Scene) (bool, error) {
 	if err := r.resize(s.Width, s.Height); err != nil {
 		return false, err
 	}
+	r.retainMSDFPages(s) // before unchanged-frame return: release graph-unreferenced pages
 	var damage []image.Rectangle
 	known := false
 	if r.ctx1 != 0 {
@@ -957,6 +965,7 @@ func (r *Renderer) drawCanvas(c *scene.Image) error {
 	}
 	t.lastFrame = r.frame // drawn or shown: the sweep keeps a transient canvas's texture
 	if t.tex != 0 && t.w == c.W && t.h == c.H && t.ver == c.Version() {
+
 		return nil
 	}
 	if t.tex == 0 || t.w != c.W || t.h != c.H {
@@ -971,6 +980,7 @@ func (r *Renderer) drawCanvas(c *scene.Image) error {
 		return err
 	}
 	t.ver = c.Version()
+
 	return nil
 }
 
@@ -1010,6 +1020,14 @@ func (r *Renderer) buildScene(s *scene.Scene, b *gpu.Builder) (*scene.Scene, err
 // rtv, whole or, unless part is nil, only within its rectangles, keeping
 // what rtv holds elsewhere.
 func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, rtv uintptr, part *gpu.Part) error {
+	for _, batch := range b.Batches {
+		if batch.MSDFPage != nil && !r.PrepareMSDF(batch.MSDFPage) {
+			return fmt.Errorf("distance batch page unavailable")
+		}
+	}
+	if err := r.syncMSDFReference(s); err != nil {
+		return err
+	}
 	r.drawing = rtv
 	if part != nil && len(part.Rects) == 0 {
 		return nil
@@ -1084,6 +1102,13 @@ func (r *Renderer) drawBuilt(s *scene.Scene, b *gpu.Builder, rtv uintptr, part *
 			bound = bt.Image
 			call(ctx, ctxPSSetShaderResources, 2, 1, uintptr(unsafe.Pointer(&bound)))
 		}
+		msdfSRV := uintptr(0)
+		if bt.MSDFPage != nil {
+			if t := r.msdfPages[bt.MSDFPage]; t != nil {
+				msdfSRV = t.srv
+			}
+		}
+		call(ctx, ctxPSSetShaderResources, 11, 1, uintptr(unsafe.Pointer(&msdfSRV)))
 		mask := bt.ClipMask
 		call(ctx, ctxPSSetShaderResources, 5, 1, uintptr(unsafe.Pointer(&mask)))
 		if bt.Shader != nil {
@@ -1200,6 +1225,11 @@ func (r *Renderer) bindState(s *scene.Scene, backdrop uintptr) {
 	views := [4]uintptr{r.mask.srv, r.color.srv, 0, backdrop}
 	call(ctx, ctxPSSetShaderResources, 0, 4, uintptr(unsafe.Pointer(&views[0])))
 	call(ctx, ctxPSSetShaderResources, 10, 1, uintptr(unsafe.Pointer(&r.stopsSRV)))
+	msdfSRV := uintptr(0)
+	if s.MSDFAtlas != nil {
+		msdfSRV = r.msdf.srv
+	}
+	call(ctx, ctxPSSetShaderResources, 11, 1, uintptr(unsafe.Pointer(&msdfSRV)))
 }
 
 // syncStops uploads the stops of the gradients b built into r.stops,
@@ -1540,6 +1570,7 @@ func (r *Renderer) Idle() {
 	if r.pending {
 		return
 	}
+	r.releaseMSDFPages()
 	if r.ctx != 0 {
 		// Bound views own references too. Invalidate partial drawing so the
 		// next frame restores the state cleared here and draws in full.
@@ -1610,4 +1641,39 @@ func meets(sc gpu.Scissor, areas []gpu.Scissor) bool {
 		}
 	}
 	return false
+}
+
+// PrepareMSDF admits a page before the UI emits any of its glyphs. Failure
+// leaves the caller free to paint the entire layout with native text instead.
+func (r *Renderer) PrepareMSDF(a *scene.Atlas) bool {
+	if a == nil || r.device == 0 || r.ctx == 0 {
+		return false
+	}
+	if r.msdfPages == nil {
+		r.msdfPages = map[*scene.Atlas]*texture{}
+	}
+	t := r.msdfPages[a]
+	if t == nil {
+		resident := 0
+		for _, page := range r.msdfPages {
+			resident += page.w * page.h * 4
+		}
+		if len(a.Pix) > 32<<20 || resident+len(a.Pix) > 32<<20 {
+			return false
+		}
+		t = &texture{}
+		r.msdfPages[a] = t
+	}
+	if err := r.syncAtlas(t, a, formatR8G8B8A8Unorm); err != nil {
+		if r.msdfSource == a {
+			r.unbindMSDF()
+			r.msdf = texture{}
+			r.msdfSource = nil
+		}
+		free(&t.srv)
+		free(&t.tex)
+		delete(r.msdfPages, a)
+		return false
+	}
+	return true
 }

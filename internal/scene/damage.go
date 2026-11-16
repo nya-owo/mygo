@@ -48,6 +48,9 @@ type Differ struct {
 	pushes              []int
 	versions            []uint64
 	mask, color         atlasMark
+	msdf                atlasMark
+	msdfRects           []image.Rectangle
+	msdfKnown           bool
 	damage              []image.Rectangle
 	clips               []image.Rectangle
 	// pre and suf are how many ops the scenes Diff compared last share at
@@ -104,6 +107,7 @@ func (d *Differ) Diff(s *Scene) ([]image.Rectangle, bool) {
 	if !ok {
 		return nil, false
 	}
+	d.msdfRects, d.msdfKnown = d.msdf.changes(s.MSDFAtlas)
 	same := func(i, j int) bool { return d.same(i, s, j, maskRects, colorRects) }
 	n, m := len(d.ops), len(s.Ops)
 	pre := 0
@@ -297,10 +301,19 @@ func (d *Differ) sameGlyphs(ga []Glyph, s *Scene, gb []Glyph, maskRects, colorRe
 			return false
 		}
 		rects := maskRects
-		if g.Colored {
+		if g.MSDF {
+			if !d.msdfKnown {
+				return false
+			}
+			rects = d.msdfRects
+		} else if g.Colored {
 			rects = colorRects
 		}
 		at := image.Rect(int(g.U), int(g.V), int(g.U)+int(g.UW), int(g.V)+int(g.VH))
+		if g.MSDF {
+			at.Max.X++
+			at.Max.Y++
+		} // endpoint samples include the last texel
 		for _, c := range rects {
 			if c.Overlaps(at) {
 				return false
@@ -366,6 +379,9 @@ func (d *Differ) opBounds(s *Scene, out []image.Rectangle) []image.Rectangle {
 				// The GPU's renderers draw the bitmap's own size, at a
 				// whole pixel.
 				w, h := max(g.W, float32(g.UW)), max(g.H, float32(g.VH))
+				if g.MSDF {
+					w, h = g.W, g.H
+				}
 				if !g.Transform.Set {
 					x0, y0, x1, y1 = min(x0, g.X), min(y0, g.Y), max(x1, g.X+w), max(y1, g.Y+h)
 					continue
@@ -450,6 +466,9 @@ func (d *Differ) Remember(s *Scene) {
 		clear(d.ops[len(s.Ops):])
 	}
 	d.ops = append(d.ops[:0], s.Ops...)
+	if len(d.glyphs) > len(s.Glyphs) {
+		clear(d.glyphs[len(s.Glyphs):])
+	}
 	d.glyphs = append(d.glyphs[:0], s.Glyphs...)
 	d.stops = append(d.stops[:0], s.Stops...)
 	d.wide = d.wide[:0]
@@ -489,6 +508,7 @@ func (d *Differ) Remember(s *Scene) {
 	}
 	d.mask.set(s.MaskAtlas)
 	d.color.set(s.ColorAtlas)
+	d.msdf.set(s.MSDFAtlas)
 }
 
 // Release forgets the last scene and lets go of what it kept.
