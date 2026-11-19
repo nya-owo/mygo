@@ -77,3 +77,43 @@ func TestOwnThemeIgnoresPreferences(t *testing.T) {
 		t.Errorf("a theme of the app's took the desktop's accent: %v", accent)
 	}
 }
+
+func TestSetIgnoreReduceMotion(t *testing.T) {
+	ignore := false
+	target := float32(0)
+	var got float32
+	var reduced bool
+	tt := coreNewTester(func(c *context) {
+		c.SetIgnoreReduceMotion(ignore)
+		reduced = c.Preferences().ReduceMotion
+		got = coreBox(c).Size(10, 10).Animate("x", target, time.Second)
+	}, 200, 100)
+	tt.SetPreferences(Preferences{ReduceMotion: true})
+	if !reduced {
+		t.Fatal("ReduceMotion was not reported by default")
+	}
+	target = 1
+	tt.Frame()
+	if got != 1 {
+		t.Fatalf("with ReduceMotion and ignore=false, Animate is at %v, want 1", got)
+	}
+	ignore = true
+	target = 2
+	tt.Frame()
+	if reduced {
+		t.Fatal("ReduceMotion was still true with ignore=true")
+	}
+	if got == 2 {
+		t.Fatal("Animate jumped to target even though ignore=true")
+	}
+	tt.Advance(200 * time.Millisecond)
+	if got <= 1 || got >= 2 {
+		t.Fatalf("Animate did not progress mid-way: %v", got)
+	}
+	ignore = false
+	target = 3
+	tt.Frame()
+	if !reduced || got != 3 {
+		t.Fatalf("turning ignore off did not restore ReduceMotion: reduced=%v got=%v", reduced, got)
+	}
+}

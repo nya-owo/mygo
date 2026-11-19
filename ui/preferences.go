@@ -28,6 +28,13 @@ type Preferences struct {
 // A frame follows their changes.
 func (c *context) Preferences() Preferences { return c.rt.preferences() }
 
+// SetIgnoreReduceMotion sets whether animations, transitions and Preferences
+// ignore the desktop's reduce-motion preference. Call it at the start of the
+// view before building controls that animate.
+func (c *context) SetIgnoreReduceMotion(ignore bool) {
+	c.rt.ignoreReduceMotion = ignore
+}
+
 // preferences returns the desktop's settings, read once until they change.
 func (rt *engine) preferences() Preferences {
 	if !rt.prefsKnown {
@@ -43,7 +50,11 @@ func (rt *engine) preferences() Preferences {
 		}
 		rt.prefsKnown = true
 	}
-	return rt.prefs
+	prefs := rt.prefs
+	if rt.ignoreReduceMotion {
+		prefs.ReduceMotion = false
+	}
+	return prefs
 }
 
 // follow makes the theme follow the desktop's settings.

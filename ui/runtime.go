@@ -411,8 +411,9 @@ type engine struct {
 	dark        bool
 	darkKnown   bool
 	// prefs are the desktop's preferences, read once until they change.
-	prefs      Preferences
-	prefsKnown bool
+	prefs              Preferences
+	prefsKnown         bool
+	ignoreReduceMotion bool
 	// lang is the language the app shows, read as each frame starts.
 	lang string
 	// fmtRegion and fmtLocale are the formats the controls write dates

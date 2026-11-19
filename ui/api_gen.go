@@ -450,6 +450,17 @@ func (_handle *Context) Router() *Router {
 	return _ctx.Router()
 }
 
+// SetIgnoreReduceMotion sets whether animations, transitions and Preferences
+// ignore the desktop's reduce-motion preference. Call it at the start of the
+// view before building controls that animate.
+func (_handle *Context) SetIgnoreReduceMotion(ignore bool) {
+	_ctx := _handle.build()
+	if _ctx == nil {
+		return
+	}
+	_ctx.SetIgnoreReduceMotion(ignore)
+}
+
 // SetTheme makes the frame use t, for the window's root and the widgets
 // created after the call.
 func (_handle *Context) SetTheme(t *Theme) {
