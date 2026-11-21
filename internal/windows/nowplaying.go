@@ -138,6 +138,21 @@ func smtcButton(button int32) platform.MediaCommand {
 var smtc struct {
 	controls, controls2 uintptr
 	failed              bool
+	// shown is what the display updater last showed: an app that sets
+	// its position often, for lyrics apps reading the timeline, does not
+	// hand the system its artwork again each time.
+	shown     displayed
+	showsInfo bool
+}
+
+// displayed is what the display updater shows of a track.
+type displayed struct {
+	title, artist, album string
+	artwork              []byte
+}
+
+func (d displayed) same(info *platform.NowPlayingInfo) bool {
+	return d.title == info.Title && d.artist == info.Artist && d.album == info.Album && slices.Equal(d.artwork, info.Artwork)
 }
 
 // hstring returns a new HSTRING of s, which the caller deletes.
@@ -287,6 +302,7 @@ func setNowPlaying(b *Backend, info *platform.NowPlayingInfo) {
 			comCall(updater, updaterClearAll)
 			comCall(updater, updaterUpdate)
 		}
+		smtc.showsInfo = false
 		comCall(c, smtcPutPlaybackStatus, mediaPlaybackStatusClosed)
 		comCall(c, smtcPutIsEnabled, 0)
 		return
@@ -299,7 +315,9 @@ func setNowPlaying(b *Backend, info *platform.NowPlayingInfo) {
 	comCall(c, smtcPutIsStopEnabled, boolArg(info.Commands&platform.MediaStop != 0))
 	comCall(c, smtcPutIsNextEnabled, boolArg(info.Commands&platform.MediaNext != 0))
 	comCall(c, smtcPutIsPreviousEnabled, boolArg(info.Commands&platform.MediaPrevious != 0))
-	if updater != 0 {
+	if updater != 0 && !(smtc.showsInfo && smtc.shown.same(info)) {
+		smtc.shown = displayed{info.Title, info.Artist, info.Album, slices.Clone(info.Artwork)}
+		smtc.showsInfo = true
 		comCall(updater, updaterPutType, mediaPlaybackTypeMusic)
 		var music uintptr
 		if !failed(comCall(updater, updaterGetMusicProperties, uintptr(unsafe.Pointer(&music)))) && music != 0 {

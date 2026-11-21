@@ -295,6 +295,9 @@ func (w *window) placeInitially() {
 		mon = monitorAt(o.X, o.Y)
 	}
 	dpi := monitorDPI(mon)
+	if d, ok := dpiAt(o.X, o.Y); ok && !o.Center {
+		dpi = d // see SetBounds
+	}
 	width, height := toPx(o.Width, dpi), toPx(o.Height, dpi)
 	if o.UseContentSize {
 		width, height = w.outerSize(width, height, dpi)
@@ -836,7 +839,40 @@ func (w *window) rectToDIP(r rect) platform.Rect {
 
 func (w *window) SetBounds(r platform.Rect) {
 	dpi := dpiOf(w.hwnd)
-	procSetWindowPos.Call(w.hwnd, 0, uintptr(toPx(r.X, dpi)), uintptr(toPx(r.Y, dpi)), uintptr(toPx(r.Width, dpi)), uintptr(toPx(r.Height, dpi)), swpNoZOrder|swpNoActivate)
+	// Where it goes is in the DIPs of the monitor there, as Bounds and
+	// Displays give them, not in those of the monitor the window leaves:
+	// with mixed scales a spot kept on a 100% monitor came back half as
+	// far again from a 150% one, and then further at each move.
+	at := dpi
+	if d, ok := dpiAt(r.X, r.Y); ok {
+		at = d
+	}
+	x, y := uintptr(toPx(r.X, at)), uintptr(toPx(r.Y, at))
+	procSetWindowPos.Call(w.hwnd, 0, x, y, uintptr(toPx(r.Width, dpi)), uintptr(toPx(r.Height, dpi)), swpNoZOrder|swpNoActivate)
+	if now := dpiOf(w.hwnd); now != dpi {
+		// On another monitor, which rescaled it about its own suggestion:
+		// put it exactly where it was asked to go, at that monitor's size.
+		procSetWindowPos.Call(w.hwnd, 0, x, y, uintptr(toPx(r.Width, now)), uintptr(toPx(r.Height, now)), swpNoZOrder|swpNoActivate)
+	}
+}
+
+// dpiAt returns the DPI of the monitor holding the point (x, y), given in
+// DIPs as Displays reports monitors: each one's pixels over its own DPI.
+// Main thread only.
+func dpiAt(x, y int) (int, bool) {
+	dpi, found := 0, false
+	enumMonitors(func(m uintptr) {
+		if found {
+			return
+		}
+		d := monitorDPI(m)
+		r := monitorInfo(m).Monitor
+		left, top := toDIP(r.Left, d), toDIP(r.Top, d)
+		if x >= left && y >= top && x < left+toDIP(r.Right-r.Left, d) && y < top+toDIP(r.Bottom-r.Top, d) {
+			dpi, found = d, true
+		}
+	})
+	return dpi, found
 }
 
 func (w *window) Bounds() platform.Rect {
