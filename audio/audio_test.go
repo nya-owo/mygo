@@ -639,3 +639,70 @@ func TestNullDeviceKeepsTime(t *testing.T) {
 		t.Errorf("after 2 s: %v, want errRetry", err)
 	}
 }
+
+type stallSource struct {
+	ready bool
+	val   float32
+}
+
+func (s *stallSource) read(dst []float32) (int, bool) {
+	if !s.ready {
+		return 0, false
+	}
+	for i := range dst {
+		dst[i] = s.val
+	}
+	return len(dst), false
+}
+func (s *stallSource) seek(int64)                 {}
+func (s *stallSource) setLoop(bool, int64, int64) {}
+func (s *stallSource) close()                     {}
+
+// A stream that stalls mid-playback must fade back in smoothly upon recovery
+// rather than snapping from silence to full amplitude.
+func TestStreamUnderrunFadesInOnRecovery(t *testing.T) {
+	setup(t)
+	src := &stallSource{ready: true, val: 0.5}
+	v := &voice{
+		src:    src,
+		rate:   sampleRate,
+		mono:   true,
+		length: -1,
+		volume: 1,
+		speed:  1,
+		end:    -1,
+	}
+	v.reset(0)
+	v.playing, v.active, v.snap = true, true, true
+	voices = append(voices, v)
+
+	out := render(64)
+	if !near(out[2*60], 0.5) {
+		t.Fatalf("steady output = %v, want 0.5", out[2*60])
+	}
+	// Drain v.in and trigger an underrun.
+	src.ready = false
+	render(512)
+	if !v.fadeIn {
+		t.Fatal("underrun did not arm fade-in for recovery")
+	}
+	// Recover: first frames must ramp up from near 0 rather than hard-stepping to 0.5.
+	src.ready = true
+	out = render(rampFrames + 16)
+	if out[0] >= 0.05 {
+		t.Fatalf("recovery frame 0 = %v, want smooth fade-in starting near 0", out[0])
+	}
+	if !near(out[2*(rampFrames+8)], 0.5) {
+		t.Fatalf("post-ramp frame = %v, want 0.5", out[2*(rampFrames+8)])
+	}
+}
+
+func TestStreamRingBufferHeadroom(t *testing.T) {
+	setup(t)
+	d := &genDecoder{ch: 2, length: sampleRate * 4}
+	s := newStream(d)
+	defer s.close()
+	if got, want := len(s.ring)/s.keep, sampleRate*2; got < want {
+		t.Fatalf("stream ring buffer = %d frames, want at least %d", got, want)
+	}
+}

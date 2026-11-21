@@ -119,3 +119,42 @@ func TestIdleReleasesUnusedCanvases(t *testing.T) {
 	pix, stride := r.readBack(t)
 	gputest.Compare(t, "d3d11-canvas-after-idle", pix, stride, s)
 }
+
+// Active windows must release unused trailing blurred slots and shrink
+// oversized backdrop scratch targets on periodic sweeps.
+func TestSweepShrinksUnusedScratchTargets(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	s := gputest.Scene()
+	r, err := New(hiddenWindow(t, s.Width, s.Height))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Release()
+	if err := r.draw(s); err != nil {
+		t.Fatal(err)
+	}
+	if r.grab.tex == 0 || r.backdrop[0].tex == 0 || len(r.blurred) == 0 {
+		t.Fatal("initial scene did not allocate backdrop and blurred targets")
+	}
+	// First sweep keeps targets used in the window that just ended and resets peaks.
+	r.sweep()
+	if r.grab.tex == 0 || len(r.blurred) == 0 {
+		t.Fatal("sweep dropped targets that were used in the current window")
+	}
+	// Draw an empty scene with no backdrops or blurs, then sweep again.
+	if err := r.draw(&scene.Scene{Width: s.Width, Height: s.Height}); err != nil {
+		t.Fatal(err)
+	}
+	r.sweep()
+	if r.grab.tex != 0 || r.backdrop[0].tex != 0 || r.backdrop[1].tex != 0 || r.blurTmp[0].tex != 0 || len(r.blurred) != 0 {
+		t.Fatalf("sweep retained unused scratch targets: grab=%v backdrop=%v blurTmp=%v blurred=%d",
+			r.grab.tex != 0, r.backdrop[0].tex != 0, r.blurTmp[0].tex != 0, len(r.blurred))
+	}
+	// Drawing the original scene again recreates all targets cleanly.
+	if err := r.draw(s); err != nil {
+		t.Fatal(err)
+	}
+	pix, stride := r.readBack(t)
+	gputest.Compare(t, "d3d11-after-sweep", pix, stride, s)
+}

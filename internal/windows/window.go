@@ -513,6 +513,16 @@ func (w *window) message(m uint32, wp, lp uintptr) (uintptr, bool) {
 			pos.Flags |= swpNoMove
 		}
 		return 0, false
+	case wmWindowPosChanged:
+		if w.surface != nil {
+			w.surface.updateOcclusion()
+		}
+		return 0, false
+	case wmShowWindow:
+		if wp == 0 && w.surface != nil {
+			w.surface.occluded = true
+		}
+		return 0, false
 	case wmCommand:
 		if w.thumbClicked(wp) {
 			return 0, true
@@ -583,6 +593,9 @@ func (w *window) sized(kind uintptr) {
 			w.h.Unmaximized()
 		}
 		w.state = sizeRestored
+	}
+	if w.surface != nil {
+		w.surface.updateOcclusion()
 	}
 	w.h.Resized()
 }
@@ -948,6 +961,9 @@ func (w *window) IsAlwaysOnTop() bool { return windowLong(w.hwnd, gwlExStyle)&ws
 func (w *window) Show() {
 	if f := w.opts.Flyout; f != nil && !f.Focusable {
 		procShowWindow.Call(w.hwnd, swShowNoActivate)
+		if w.surface != nil {
+			w.surface.updateOcclusion()
+		}
 		return
 	}
 	if w.showMaximized {
@@ -955,6 +971,9 @@ func (w *window) Show() {
 		procShowWindow.Call(w.hwnd, swShowMaximized)
 	} else {
 		procShowWindow.Call(w.hwnd, swShow)
+	}
+	if w.surface != nil {
+		w.surface.updateOcclusion()
 	}
 	procSetForegroundWindow.Call(w.hwnd)
 }
@@ -964,11 +983,22 @@ func (w *window) ShowInactive() {
 		// Maximizing activates the window; there is no inactive variant.
 		w.showMaximized = false
 		procShowWindow.Call(w.hwnd, swShowMaximized)
+		if w.surface != nil {
+			w.surface.updateOcclusion()
+		}
 		return
 	}
 	procShowWindow.Call(w.hwnd, swShowNoActivate)
+	if w.surface != nil {
+		w.surface.updateOcclusion()
+	}
 }
-func (w *window) Hide() { procShowWindow.Call(w.hwnd, swHide) }
+func (w *window) Hide() {
+	procShowWindow.Call(w.hwnd, swHide)
+	if w.surface != nil {
+		w.surface.updateOcclusion()
+	}
+}
 
 func (w *window) IsVisible() bool {
 	r, _, _ := procIsWindowVisible.Call(w.hwnd)
@@ -1040,7 +1070,12 @@ func (w *window) IsMaximized() bool {
 	return r != 0
 }
 
-func (w *window) Restore() { procShowWindow.Call(w.hwnd, swRestore) }
+func (w *window) Restore() {
+	procShowWindow.Call(w.hwnd, swRestore)
+	if w.surface != nil {
+		w.surface.updateOcclusion()
+	}
+}
 
 // SetFullScreen takes the window's frame and menu bar away, or gives them
 // back. Each step sizes the window again: it is laid out once, at the end.

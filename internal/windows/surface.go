@@ -126,6 +126,7 @@ type surface struct {
 	// now tells that a frame draws at once: one a resize draws, or one
 	// FrameNow draws for a frame left to draw (platform.PacedSurface).
 	now      bool
+	occluded bool
 	tracking bool
 	buttons  int
 	clicks   platform.ClickCounter
@@ -284,7 +285,28 @@ func (s *surface) RefreshRate() float64 {
 // off the main thread.
 func (s *surface) AwaitRefresh() { procDwmFlush.Call() }
 
-var _ platform.RefreshSurface = (*surface)(nil)
+// Occluded reports whether nothing of the window shows on screen: closed,
+// hidden, or minimized, where animations and periodic redraws pause until
+// the window shows again (platform.OccludableSurface).
+func (s *surface) Occluded() bool {
+	occ := s.w.closed || !s.w.IsVisible() || s.w.IsMinimized()
+	s.occluded = occ
+	return occ
+}
+
+// updateOcclusion tracks visibility transitions and sends SurfaceShown
+// once a hidden or minimized window shows again.
+func (s *surface) updateOcclusion() {
+	was := s.occluded
+	if !s.Occluded() && was {
+		s.send(platform.SurfaceEvent{Kind: platform.SurfaceShown})
+	}
+}
+
+var (
+	_ platform.RefreshSurface    = (*surface)(nil)
+	_ platform.OccludableSurface = (*surface)(nil)
+)
 
 func (s *surface) PresentPixels(pix []byte, stride, width, height int) {
 	if len(pix) < stride*height || width == 0 || height == 0 {

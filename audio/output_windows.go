@@ -22,22 +22,26 @@ type guid struct {
 }
 
 var (
-	clsidMMDeviceEnumerator   = guid{0xbcde0395, 0xe52f, 0x467c, [8]byte{0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e}}
-	iidIMMDeviceEnumerator    = guid{0xa95664d2, 0x9614, 0x4f35, [8]byte{0xa7, 0x46, 0xde, 0x8d, 0xb6, 0x36, 0x17, 0xe6}}
-	iidIAudioClient           = guid{0x1cb9ad4c, 0xdbfa, 0x4c32, [8]byte{0xb1, 0x78, 0xc2, 0xf5, 0x68, 0xa7, 0x03, 0xb2}}
-	iidIAudioRenderClient     = guid{0xf294acfc, 0x3146, 0x4483, [8]byte{0xa7, 0xbf, 0xad, 0xdc, 0xa7, 0xc2, 0x60, 0xe2}}
-	ksDataFormatSubtypeFloat  = guid{0x00000003, 0x0000, 0x0010, [8]byte{0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}}
-	ole32                     = syscall.NewLazyDLL("ole32.dll")
-	kernel32                  = syscall.NewLazyDLL("kernel32.dll")
-	procCoInitializeEx        = ole32.NewProc("CoInitializeEx")
-	procCoCreateInstance      = ole32.NewProc("CoCreateInstance")
-	procCoTaskMemFree         = ole32.NewProc("CoTaskMemFree")
-	procCreateEventW          = kernel32.NewProc("CreateEventW")
-	procWaitForSingleObject   = kernel32.NewProc("WaitForSingleObject")
-	procCloseHandle           = kernel32.NewProc("CloseHandle")
-	comInitialized            bool
-	errDefaultDeviceChanged   = errors.New("audio: the default output changed")
-	errAudioClientUnresponded = errors.New("audio: the audio client stopped asking for frames")
+	clsidMMDeviceEnumerator          = guid{0xbcde0395, 0xe52f, 0x467c, [8]byte{0x8e, 0x3d, 0xc4, 0x57, 0x92, 0x91, 0x69, 0x2e}}
+	iidIMMDeviceEnumerator           = guid{0xa95664d2, 0x9614, 0x4f35, [8]byte{0xa7, 0x46, 0xde, 0x8d, 0xb6, 0x36, 0x17, 0xe6}}
+	iidIAudioClient                  = guid{0x1cb9ad4c, 0xdbfa, 0x4c32, [8]byte{0xb1, 0x78, 0xc2, 0xf5, 0x68, 0xa7, 0x03, 0xb2}}
+	iidIAudioRenderClient            = guid{0xf294acfc, 0x3146, 0x4483, [8]byte{0xa7, 0xbf, 0xad, 0xdc, 0xa7, 0xc2, 0x60, 0xe2}}
+	ksDataFormatSubtypeFloat         = guid{0x00000003, 0x0000, 0x0010, [8]byte{0x80, 0x00, 0x00, 0xaa, 0x00, 0x38, 0x9b, 0x71}}
+	ole32                            = syscall.NewLazyDLL("ole32.dll")
+	kernel32                         = syscall.NewLazyDLL("kernel32.dll")
+	avrt                             = syscall.NewLazyDLL("avrt.dll")
+	procCoInitializeEx               = ole32.NewProc("CoInitializeEx")
+	procCoCreateInstance             = ole32.NewProc("CoCreateInstance")
+	procCoTaskMemFree                = ole32.NewProc("CoTaskMemFree")
+	procCreateEventW                 = kernel32.NewProc("CreateEventW")
+	procWaitForSingleObject          = kernel32.NewProc("WaitForSingleObject")
+	procCloseHandle                  = kernel32.NewProc("CloseHandle")
+	procAvSetMmThreadCharacteristics = avrt.NewProc("AvSetMmThreadCharacteristicsW")
+	procAvRevertMmThreadChar         = avrt.NewProc("AvRevertMmThreadCharacteristics")
+	mmcssProAudio, _                 = syscall.UTF16PtrFromString("Pro Audio")
+	comInitialized                   bool
+	errDefaultDeviceChanged          = errors.New("audio: the default output changed")
+	errAudioClientUnresponded        = errors.New("audio: the audio client stopped asking for frames")
 )
 
 type waveFormatExtensible struct {
@@ -102,8 +106,9 @@ func release(obj uintptr) {
 type wasapiDevice struct {
 	enumerator, client, render uintptr
 	event                      uintptr
-	frames                     uint32 // the client's buffer
-	id                         string // the device's endpoint ID
+	mmcss                      uintptr // MMCSS "Pro Audio" registration on the output thread
+	frames                     uint32  // the client's buffer
+	id                         string  // the device's endpoint ID
 	checked                    time.Time
 	want                       string // the output asked for, "" for the default
 	fellBack                   bool   // the default, while the one asked for is gone
@@ -227,6 +232,13 @@ func (d *wasapiDevice) open(ahead time.Duration, want string) error {
 	if hr := comCall(d.client, 10); failed(hr) {
 		return hresult("IAudioClient.Start", hr)
 	}
+	// Elevate the locked WASAPI thread with MMCSS ("Pro Audio") so UI work,
+	// GC sweeps, or background tasks do not starve audio buffer refills.
+	if procAvSetMmThreadCharacteristics.Find() == nil && mmcssProAudio != nil {
+		var taskIndex uint32
+		h, _, _ := procAvSetMmThreadCharacteristics.Call(uintptr(unsafe.Pointer(mmcssProAudio)), uintptr(unsafe.Pointer(&taskIndex)))
+		d.mmcss = h
+	}
 	d.checked = time.Now()
 	return nil
 }
@@ -279,6 +291,12 @@ func (d *wasapiDevice) write(samples []float32) error {
 }
 
 func (d *wasapiDevice) close() {
+	if d.mmcss != 0 {
+		if procAvRevertMmThreadChar.Find() == nil {
+			procAvRevertMmThreadChar.Call(d.mmcss)
+		}
+		d.mmcss = 0
+	}
 	if d.client != 0 {
 		comCall(d.client, 11)
 	}

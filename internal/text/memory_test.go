@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unsafe"
 	"weak"
 )
@@ -311,5 +312,35 @@ func TestOversizedParagraphEvictsUnusedLayouts(t *testing.T) {
 	}
 	if s.Layout(Params{Text: "label 0"}) == unused {
 		t.Fatal("the unused layouts survived")
+	}
+}
+
+func TestSystemIdleShrinksAtlasAndClearsLayouts(t *testing.T) {
+	s := newSystem()
+	s.eng = &stubEngine{}
+	s.Layout(Params{Text: "hello idle"})
+	s.EndFrame()
+	for s.ColorAtlas.W < 1024 {
+		s.ColorAtlas.Grow()
+	}
+	genBefore := s.ColorAtlas.Generation()
+
+	// While another window drew recently, Idle must not shrink atlases or drop recent layouts.
+	s.Idle(time.Hour)
+	if s.ColorAtlas.W < 1024 || len(s.layouts) == 0 {
+		t.Fatal("Idle shrank atlas or dropped layouts while frames were still recent")
+	}
+
+	// Once all windows have been idle long enough, layouts clear and oversized atlases shrink.
+	s.lastEndFrame = time.Now().Add(-5 * time.Second)
+	s.Idle(2 * time.Second)
+	if len(s.layouts) != 0 || s.layoutBytes != 0 {
+		t.Fatalf("Idle left %d layouts (%d bytes)", len(s.layouts), s.layoutBytes)
+	}
+	if s.ColorAtlas.W > 256 || s.ColorAtlas.H > 256 {
+		t.Fatalf("Idle left ColorAtlas at %dx%d, want <= 256x256", s.ColorAtlas.W, s.ColorAtlas.H)
+	}
+	if s.ColorAtlas.Generation() == genBefore {
+		t.Fatal("Idle shrank ColorAtlas without bumping generation")
 	}
 }

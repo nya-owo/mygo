@@ -76,8 +76,8 @@ func newStream(d Decoder) *stream {
 	ch := max(d.Channels(), 1)
 	s := &stream{d: d, channels: ch, keep: min(ch, 2), seekTo: -1}
 	s.cond.L = &s.mu
-	// About a second ahead.
-	frames := max(d.SampleRate(), 4096)
+	// About two seconds ahead to absorb decoder and GC pauses without underruns.
+	frames := max(d.SampleRate()*2, 8192)
 	s.ring = make([]float32, frames*s.keep)
 	go s.decode()
 	return s

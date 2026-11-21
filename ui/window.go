@@ -509,6 +509,7 @@ func (h *windowHost) idle() {
 		h.armIdle(frameIdle - since)
 		return
 	}
+	h.last = nil
 	h.soft.Release()
 	if g, ok := h.gpu.(interface{ Idle() }); ok {
 		g.Idle()
@@ -516,6 +517,7 @@ func (h *windowHost) idle() {
 	if s, ok := h.conn.Surface.(platform.IdleSurface); ok {
 		s.Idle()
 	}
+	text.Shared().Idle(frameIdle)
 }
 
 // useWide has the GPU renderer draw the colors of s outside the sRGB gamut
@@ -649,7 +651,7 @@ func (h *windowHost) retryLater() {
 // or where one waits for the window to show (holdFrame), so that a window
 // out of sight shows what it shows now.
 func (h *windowHost) capture() (int, int, []byte) {
-	if h.last == nil || h.rt.held {
+	if h.last == nil || h.rt.held || atlasGenerations(h.last) != h.rt.atlases {
 		h.rt.runFrame()
 	}
 	s := h.last

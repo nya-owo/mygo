@@ -285,7 +285,9 @@ func (v *voice) play(out []float32, master float64) (int, bool) {
 	for i := 0; i < len(out); i += 2 {
 		for v.phase >= 1 {
 			if !v.next() {
-				// The stream is late: silence until it catches up.
+				// The stream is late: silence until it catches up, then
+				// fade back in smoothly rather than clicking.
+				v.fadeIn = true
 				return i / 2, true
 			}
 			v.phase--

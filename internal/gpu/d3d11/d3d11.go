@@ -344,6 +344,15 @@ type Renderer struct {
 	blurred  []texture
 	used     int
 	blurTmp  [2]texture
+	// Peak scratch usage over the current sweep window, so targets that grew
+	// for a transient full-screen sheet or lyrics blur shrink back while active.
+	blurredPeak   int
+	grabPeakW     int
+	grabPeakH     int
+	backdropPeakW int
+	backdropPeakH int
+	blurTmpPeakW  int
+	blurTmpPeakH  int
 
 	b gpu.Builder
 
@@ -1249,6 +1258,13 @@ func (r *Renderer) blurImage(img *scene.Image, bk scene.Backdrop) uintptr {
 	}
 	out := &r.blurred[r.used]
 	r.used++
+	if r.used > r.blurredPeak {
+		r.blurredPeak = r.used
+	}
+	if bk.Radius != 0 {
+		r.blurTmpPeakW = max(r.blurTmpPeakW, w)
+		r.blurTmpPeakH = max(r.blurTmpPeakH, h)
+	}
 	if out.tex == 0 || out.w != w || out.h != h {
 		if r.newTarget(out, w, h, true) != nil {
 			return 0
@@ -1323,6 +1339,10 @@ func (r *Renderer) fitBackdrop(b *gpu.Builder) error {
 	for _, bk := range b.Backdrops {
 		aw, ah = max(aw, bk.Area.Dx()), max(ah, bk.Area.Dy())
 	}
+	r.grabPeakW = max(r.grabPeakW, aw)
+	r.grabPeakH = max(r.grabPeakH, ah)
+	r.backdropPeakW = max(r.backdropPeakW, w)
+	r.backdropPeakH = max(r.backdropPeakH, h)
 	// Somewhat larger, so that a pane growing does not make them again
 	// every frame.
 	if aw > r.grab.w || ah > r.grab.h {
@@ -1490,7 +1510,7 @@ func (r *Renderer) present(sync uintptr) error {
 
 // imageCacheLimit bounds retained RGBA textures, apart from those needed
 // by the current frame. Live images must survive until drawing completes.
-const imageCacheLimit = 32 << 20
+const imageCacheLimit = 16 << 20
 
 // trimImages drops the least recently drawn images until they fit. An idle
 // window passes zero so unused covers go even when no more frames arrive.
@@ -1583,8 +1603,9 @@ func (r *Renderer) FrameInfo() string {
 	return r.b.Summary()
 }
 
-// sweep frees the textures of images no frame drew for a while, and
-// those of canvases gone, or transient and not drawn this frame: render
+// sweep frees the textures of images no frame drew for a while, canvases
+// gone or transient and not drawn this frame, and scratch blur/backdrop
+// targets that are unused or far larger than recent frames needed: render
 // calls it every 120 frames.
 func (r *Renderer) sweep() {
 	for id, t := range r.images {
@@ -1600,6 +1621,37 @@ func (r *Renderer) sweep() {
 			delete(r.canvases, id)
 		}
 	}
+	if len(r.blurred) > r.blurredPeak {
+		for i := r.blurredPeak; i < len(r.blurred); i++ {
+			t := &r.blurred[i]
+			free(&t.rtv)
+			free(&t.srv)
+			free(&t.tex)
+		}
+		r.blurred = r.blurred[:r.blurredPeak]
+	}
+	freeOversized := func(t *texture, pw, ph int) {
+		if t.tex == 0 {
+			return
+		}
+		if pw == 0 || ph == 0 || t.w*t.h > 4*pw*ph {
+			free(&t.rtv)
+			free(&t.srv)
+			free(&t.tex)
+			*t = texture{}
+		}
+	}
+	freeOversized(&r.grab, r.grabPeakW, r.grabPeakH)
+	for i := range r.backdrop {
+		freeOversized(&r.backdrop[i], r.backdropPeakW, r.backdropPeakH)
+	}
+	for i := range r.blurTmp {
+		freeOversized(&r.blurTmp[i], r.blurTmpPeakW, r.blurTmpPeakH)
+	}
+	r.blurredPeak = 0
+	r.grabPeakW, r.grabPeakH = 0, 0
+	r.backdropPeakW, r.backdropPeakH = 0, 0
+	r.blurTmpPeakW, r.blurTmpPeakH = 0, 0
 }
 
 // meets reports whether sc meets one of areas.

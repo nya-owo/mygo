@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 	"unicode"
 	"unsafe"
 
@@ -339,6 +340,7 @@ type System struct {
 	oldest, newest *cached
 	layoutBytes    int
 	frame          uint64
+	lastEndFrame   time.Time
 	// made counts the layouts made (LayoutsMade), and gen the times the
 	// system forgot its layouts (Generation).
 	made, gen uint64
@@ -626,6 +628,7 @@ func (s *System) EndFrame() {
 		}
 	}
 	s.frame++
+	s.lastEndFrame = time.Now()
 	if f, ok := s.eng.(fontForgetter); ok && f.fontCount() > maxFonts {
 		// Fonts pile up with sizes, as with animated ones: let them all go,
 		// with what refers to them. The atlas takes back the room of their
@@ -646,6 +649,47 @@ func (s *System) EndFrame() {
 	}
 	for s.oldest != nil && s.frame-s.oldest.used > 240 {
 		s.removeLayout(s.oldest)
+	}
+}
+
+// Idle releases cached layouts and shrinks oversized glyph atlases once no
+// window has finished a frame for at least minIdle. If another window drew
+// more recently, it only trims excess layouts outside the live window.
+func (s *System) Idle(minIdle time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.lastEndFrame.IsZero() && time.Since(s.lastEndFrame) < minIdle {
+		for s.oldest != nil && s.overLayoutBudget(0) {
+			s.removeLayout(s.oldest)
+		}
+		return
+	}
+	s.clearLayouts()
+	clear(s.marks)
+	clear(s.recent)
+	clear(s.transient)
+	s.MaskAtlas.ResetTransient()
+	if s.MaskAtlas.Shrink(256, 256) {
+		s.dropAtlasEntries(false)
+	}
+	if s.ColorAtlas.Shrink(256, 256) {
+		s.dropAtlasEntries(true)
+	}
+}
+
+func (s *System) dropAtlasEntries(color bool) {
+	for k, e := range s.glyphs {
+		if e.OK && e.inColor() == color {
+			delete(s.glyphs, k)
+		}
+	}
+	for k, e := range s.runs {
+		if e.inColor() == color {
+			delete(s.runs, k)
+		}
+	}
+	if !color {
+		clear(s.masks)
 	}
 }
 
