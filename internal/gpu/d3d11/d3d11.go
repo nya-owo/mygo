@@ -344,6 +344,12 @@ type Renderer struct {
 	blurred  []texture
 	used     int
 	blurTmp  [2]texture
+	// trimAt and trimFrame are when trimScratch last looked, and the frame
+	// then; backNeed and blurNeed the largest backdrop and blur passes
+	// frames needed since.
+	trimAt             time.Time
+	trimFrame          uint64
+	backNeed, blurNeed image.Point
 
 	b gpu.Builder
 
@@ -823,6 +829,7 @@ func (r *Renderer) Render(s *scene.Scene) error {
 	if err != nil {
 		return err
 	}
+	r.trimScratch()
 	if !drawn {
 		r.waitRefresh()
 		return nil
@@ -1249,6 +1256,8 @@ func (r *Renderer) blurImage(img *scene.Image, bk scene.Backdrop) uintptr {
 	}
 	out := &r.blurred[r.used]
 	r.used++
+	out.lastFrame, r.blurTmp[0].lastFrame, r.blurTmp[1].lastFrame = r.frame, r.frame, r.frame
+	r.blurNeed = image.Pt(max(r.blurNeed.X, w), max(r.blurNeed.Y, h))
 	if out.tex == 0 || out.w != w || out.h != h {
 		if r.newTarget(out, w, h, true) != nil {
 			return 0
@@ -1322,6 +1331,10 @@ func (r *Renderer) fitBackdrop(b *gpu.Builder) error {
 	aw, ah := 0, 0
 	for _, bk := range b.Backdrops {
 		aw, ah = max(aw, bk.Area.Dx()), max(ah, bk.Area.Dy())
+	}
+	if len(b.Backdrops) > 0 {
+		r.grab.lastFrame, r.backdrop[0].lastFrame, r.backdrop[1].lastFrame = r.frame, r.frame, r.frame
+		r.backNeed = image.Pt(max(r.backNeed.X, w, aw), max(r.backNeed.Y, h, ah))
 	}
 	// Somewhat larger, so that a pane growing does not make them again
 	// every frame.
@@ -1570,6 +1583,54 @@ func (r *Renderer) Idle() {
 		free(&t.tex)
 	}
 	r.blurred = nil
+}
+
+// scratchIdle is how long the scratch targets of backdrops and blurs go
+// unused, or larger than needed, before trimScratch lets them go.
+const scratchIdle = 3 * time.Second
+
+// trimScratch frees the scratch targets no frame used since it last
+// looked, scratchIdle or more ago, and those much larger than frames
+// needed since: a window that keeps drawing, as one whose progress moves
+// every second does, never comes to Idle, and would keep those a view
+// once shown (a blurred page, a wide glass) made, window-sized, for good.
+// They are made again, as large as needed, when a frame next uses them.
+func (r *Renderer) trimScratch() {
+	now := time.Now()
+	if now.Sub(r.trimAt) < scratchIdle {
+		return
+	}
+	since, back, blur := r.trimFrame, r.backNeed, r.blurNeed
+	r.trimAt, r.trimFrame, r.backNeed, r.blurNeed = now, r.frame, image.Point{}, image.Point{}
+	if since == 0 {
+		return
+	}
+	drop := func(t *texture, need image.Point) {
+		// Grown by a quarter when made: twice the area needed is too large.
+		if t.tex != 0 && (t.lastFrame < since || t.w*t.h > 2*need.X*need.Y) {
+			free(&t.rtv)
+			free(&t.srv)
+			free(&t.tex)
+			*t = texture{}
+		}
+	}
+	drop(&r.grab, back)
+	drop(&r.backdrop[0], back)
+	drop(&r.backdrop[1], back)
+	drop(&r.blurTmp[0], blur)
+	drop(&r.blurTmp[1], blur)
+	n := len(r.blurred)
+	for n > 0 && r.blurred[n-1].lastFrame < since {
+		t := &r.blurred[n-1]
+		free(&t.rtv)
+		free(&t.srv)
+		free(&t.tex)
+		n--
+	}
+	clear(r.blurred[n:])
+	r.blurred = r.blurred[:n]
+	// And the canvases the app let go of since, which wait for a sweep.
+	r.sweep()
 }
 
 // FrameInfo describes the last frame for MYGO_FRAME_STATS.

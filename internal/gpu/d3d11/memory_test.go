@@ -3,6 +3,7 @@
 package d3d11
 
 import (
+	"image"
 	"runtime"
 	"testing"
 
@@ -118,4 +119,58 @@ func TestIdleReleasesUnusedCanvases(t *testing.T) {
 	}
 	pix, stride := r.readBack(t)
 	gputest.Compare(t, "d3d11-canvas-after-idle", pix, stride, s)
+}
+
+// A window that keeps drawing never comes to Idle: the scratch targets a
+// blurred view once made must still go once frames stop using them, and
+// those still used stay.
+func TestTrimScratchWhileDrawing(t *testing.T) {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	r, err := New(hiddenWindow(t, 64, 64))
+	if err != nil {
+		t.Skip("no Direct3D 11:", err)
+	}
+	defer r.Release()
+	for _, tx := range []*texture{&r.grab, &r.backdrop[0], &r.blurTmp[0]} {
+		if err := r.newTarget(tx, 512, 512, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.blurred = make([]texture, 3)
+	for i := range r.blurred {
+		if err := r.newTarget(&r.blurred[i], 256, 256, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r.frame = 10
+	r.trimScratch() // the first look only marks where it started
+	if r.grab.tex == 0 || len(r.blurred) != 3 {
+		t.Fatal("the first look freed targets")
+	}
+	// Frames go on: the glass reads its backdrop at the size it needs, and
+	// one blurred image is drawn, the rest no longer.
+	r.frame = 20
+	r.grab.lastFrame, r.backdrop[0].lastFrame, r.blurred[0].lastFrame = 20, 20, 20
+	r.backNeed = image.Pt(400, 400)
+	r.trimAt = r.trimAt.Add(-scratchIdle)
+	r.trimScratch()
+	if r.grab.tex == 0 || r.backdrop[0].tex == 0 {
+		t.Error("a backdrop target still used was freed")
+	}
+	if r.blurTmp[0].tex != 0 {
+		t.Error("the unused blur pass target was kept")
+	}
+	if len(r.blurred) != 1 || r.blurred[0].tex == 0 {
+		t.Errorf("kept %d blurred targets, want the one drawn", len(r.blurred))
+	}
+	// The glass then needs a small area only: the large targets go.
+	r.frame = 30
+	r.grab.lastFrame, r.backdrop[0].lastFrame, r.blurred[0].lastFrame = 30, 30, 30
+	r.backNeed = image.Pt(100, 100)
+	r.trimAt = r.trimAt.Add(-scratchIdle)
+	r.trimScratch()
+	if r.grab.tex != 0 || r.backdrop[0].tex != 0 {
+		t.Error("backdrop targets far larger than needed were kept")
+	}
 }
