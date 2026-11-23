@@ -1391,6 +1391,11 @@ func (e *node) MaximizeButton() *node {
 // PassThrough lets the pointer reach what is under the element.
 func (e *node) PassThrough() *node { e.flags |= flagPassThrough; return e }
 
+// Inert lets the element and all inside it show but take neither the
+// pointer, which reaches what is under them, nor the focus, as a page going
+// away: a pane closing, still drawn as it goes, as a popup's.
+func (e *node) Inert() *node { e.flags |= flagInert; return e }
+
 // FocusRing sets whether MyGo rings the element when it has the keyboard
 // focus from the keyboard, as it does by default. Widgets that ring a part
 // of themselves instead, as a check box its box, turn it off and draw

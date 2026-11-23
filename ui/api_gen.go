@@ -4204,6 +4204,19 @@ func (_handle Element) InView() bool {
 	return _node.InView()
 }
 
+// Inert lets the element and all inside it show but take neither the
+// pointer, which reaches what is under them, nor the focus, as a page going
+// away: a pane closing, still drawn as it goes, as a popup's.
+func (_handle Element) Inert() Element {
+	_node := _handle.node()
+	if _node == nil {
+		return Element{}
+	}
+	_ctx := _node.c
+	_ = _ctx
+	return wrapElement(_node.Inert())
+}
+
 // InputMethod sets whether the system's input methods compose text for the
 // element while it has the keyboard focus, as they do by default for one
 // that takes text (HandleTextInput, TextCaret). Turned off, keys type the

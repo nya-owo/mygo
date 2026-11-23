@@ -43,6 +43,12 @@ type Glass struct {
 	// 200. On Clear glass, which barely tones already, it only lights the
 	// rim and curves the bezel.
 	Clarity float32
+	// Basis, for a pane on its way to its size, as one growing out of the
+	// button that opened it, is the shorter side it has there, in DIPs:
+	// its material is the one of that size all the way, rather than going
+	// from a control's to a pane's as it grows, its blur and its bezel
+	// changing with every frame of the way.
+	Basis float32
 }
 
 // Style is the material of Glass.
@@ -142,7 +148,15 @@ func paint(p *ui.Painter, box ui.Rect, radii [4]float32, g Glass) {
 	if box.W <= 0 || box.H <= 0 {
 		return
 	}
-	mat := paneMaterial(min(box.W, box.H), p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	m := min(box.W, box.H)
+	if g.Basis > 0 {
+		m = g.Basis
+	}
+	mat := paneMaterial(m, p.Scale(), g.Clarity, g.Style == Clear, p.Theme().Dark)
+	if half := min(box.W, box.H) / 2 * p.Scale(); mat.bezel > half {
+		// Smaller than its basis yet, its bezel is at most half of it.
+		mat.bezel, mat.refraction = half, 1.6*half
+	}
 	if g.Tint.A > 0 {
 		mat.tint, mat.wideTint = p.EffectColor(g.Tint)
 		mat.tint[3] *= 0.88
