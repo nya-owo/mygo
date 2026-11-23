@@ -29,6 +29,10 @@ type tooltips struct {
 	// dismissed is the element whose tip a press or Escape hid, until
 	// neither the pointer nor the focus is on it.
 	dismissed uint64
+	// posed is the element whose tip shows, since tipMotion brought it
+	// in: at once if warmShow.
+	posed    uint64
+	warmShow bool
 	// lastShown is when a tip last showed, or went.
 	lastShown time.Time
 }
@@ -77,16 +81,57 @@ func tooltipBase(c *context, anchor *node, fn func(tip *node)) (*node, bool) {
 	}
 	var tip *node
 	coreOverlay(c, func() {
+		// Keyed by its anchor: the tip of another element is another tip,
+		// which comes in as its own.
+		c.nextKey, c.keySet = tipKey{anchor.id}, true
 		tip = coreBox(c).Absolute().PassThrough().Role(RoleTooltip)
 		fn(tip)
 		if tip.attach == 0 {
 			tip.AttachTo(anchor, AnchorTop, AnchorBottom)
 		}
+		rt.tipMotion(tip, anchor.id)
 		if tip.OverlayShortcut(0, KeyEscape) {
 			rt.tips.dismissed = anchor.id
 		}
 	})
 	return tip, rt.tips.byFocus
+}
+
+// tipKey is the key of the tip of the element of id.
+type tipKey struct{ id uint64 }
+
+// How a tip comes and goes: in quickly from a little smaller, as AppKit's
+// and SwiftUI's, and out more quickly still. A tip shown as the pointer goes
+// on from another, within tooltipWarm, shows at once, as they do.
+var (
+	tipIn  = Animation{Duration: 120 * time.Millisecond, Ease: EaseOut}
+	tipOut = Animation{Duration: 90 * time.Millisecond, Ease: EaseIn}
+)
+
+// tipMotion brings tip, the tip of the element of id, in as it first shows,
+// and has it fade as it goes.
+func (rt *engine) tipMotion(tip *node, id uint64) {
+	t := &rt.tips
+	first := t.posed != id
+	if first {
+		// It shows from this frame: at once if another tip just went.
+		d := t.hoverSince.Sub(t.lastShown)
+		t.warmShow = !t.byFocus && !t.lastShown.IsZero() && d >= 0 && d <= tooltipWarm
+	}
+	t.posed = id
+	tip.Transition(ElementTransition{Animation: &tipOut, Size: true, Exit: &Motion{}})
+	if t.warmShow {
+		return
+	}
+	if first {
+		tip.AnimatePose(Pose{Fade: 1, Scale: 0.96}, tipIn)
+		// A frame to build next, which sends it on its way: a pose at
+		// rest asks for none.
+		tip.Jump(tipKey{}, 0)
+		tip.AnimateTo(tipKey{}, 1, Animation{Duration: time.Millisecond})
+		return
+	}
+	tip.AnimatePose(Pose{}, tipIn)
 }
 
 // Tooltip shows s by the element when the pointer rests on it, or the
@@ -162,6 +207,11 @@ func (rt *engine) showTooltip(c *context) uint64 {
 		focus = 0
 	}
 	t.shown, t.byFocus = 0, false
+	defer func() {
+		if t.shown == 0 {
+			t.posed = 0 // the next to show comes in
+		}
+	}()
 	switch {
 	case focus != 0 && (hover == 0 || !t.focusSince.Before(t.hoverSince)):
 		t.shown, t.byFocus = focus, true

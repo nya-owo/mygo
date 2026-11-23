@@ -189,3 +189,48 @@ func TestTooltipInnermost(t *testing.T) {
 		t.Errorf("over the toolbar: texts %q", tt.Texts())
 	}
 }
+
+// A tip comes in from a little smaller, faded, as it first shows; one shown
+// as the pointer goes on from another shows at once.
+func TestTooltipComesIn(t *testing.T) {
+	var save, tip *node
+	tt, now := clockTester(func(c *context) {
+		coreColumn(c).Padding(80, 40).Gap(20).Children(func() {
+			save = coreButton(c, "Save").Label("save")
+			tip = coreTooltipBase(c, save, func(tip *node) {
+				tip.Padding(4).Children(func() { coreText(c, "Saves the file") })
+			})
+			coreButton(c, "Open").Label("open").Tooltip("Opens a file")
+		})
+	}, 400, 300)
+	tick := ticker(tt, now)
+	fade := func(e *node) float64 {
+		if e == nil || e.st == nil || e.st.pose == nil {
+			return 0
+		}
+		return e.st.pose.ch[4].value
+	}
+	s, _ := tt.Find("save")
+	tt.Move(s.X+s.W/2, s.Y+s.H/2)
+	tick(650 * time.Millisecond)
+	if tip == nil {
+		t.Fatal("no tip once the pointer rested")
+	}
+	if f := fade(tip); f < 0.99 {
+		t.Errorf("the tip showed at %.2f faded in its first frame, not from faded out", f)
+	}
+	tick(16 * time.Millisecond)
+	tick(200 * time.Millisecond)
+	if f := fade(tip); f > 0.01 {
+		t.Errorf("the tip is still %.2f faded after 0.2 seconds", f)
+	}
+	o, _ := tt.Find("open")
+	tt.Move(o.X+o.W/2, o.Y+o.H/2)
+	tick(16 * time.Millisecond)
+	if !tt.HasText("Opens a file") {
+		t.Fatal("the next tip did not show at once")
+	}
+	if !tt.rt.tips.warmShow {
+		t.Error("the next tip came in, rather than show at once as it took over")
+	}
+}
