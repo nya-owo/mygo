@@ -482,6 +482,17 @@ func cleanUpdateLeftovers() {
 // fetches is checked against the app's key all the same, so a mirror only
 // carries the bytes, and need not be trusted.
 func httpGet(ctx context.Context, rawURL string) (io.ReadCloser, error) {
+	if mirrorsOnly.Load() && onGitHub(rawURL) && len(mirrorList()) > 0 {
+		// The listener chose a mirror: GitHub is not asked at all.
+		var err error
+		for _, prefix := range mirrorList() {
+			var b io.ReadCloser
+			if b, err = httpGetOnce(ctx, prefix+rawURL); err == nil || ctx.Err() != nil {
+				return b, err
+			}
+		}
+		return nil, err
+	}
 	body, err := httpGetOnce(ctx, rawURL)
 	if err == nil || ctx.Err() != nil || !onGitHub(rawURL) {
 		return body, err
@@ -508,6 +519,18 @@ var mirrors atomic.Pointer[[]string]
 func (u *UpdaterModule) SetMirrors(prefixes ...string) {
 	p := append([]string(nil), prefixes...)
 	mirrors.Store(&p)
+}
+
+// mirrorsOnly has a GitHub URL fetched through the mirrors alone, never
+// from GitHub itself.
+var mirrorsOnly atomic.Bool
+
+// SetMirrorsOnly has updates fetched only through the mirrors set, without
+// trying GitHub first, as for a listener who chose one: on networks that
+// cannot reach GitHub this saves the seconds each request waits on it.
+// With no mirror set, GitHub is asked all the same.
+func (u *UpdaterModule) SetMirrorsOnly(only bool) {
+	mirrorsOnly.Store(only)
 }
 
 func mirrorList() []string {

@@ -44,3 +44,33 @@ func TestUpdateFromMirror(t *testing.T) {
 		t.Errorf("the mirror was asked for %q", got)
 	}
 }
+
+// A listener who chose a mirror has GitHub left alone: the mirror is asked
+// first, even when GitHub would answer.
+func TestUpdateMirrorsOnly(t *testing.T) {
+	var asked []string
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = append(asked, r.Host+r.URL.Path)
+		io.WriteString(w, "ok")
+	}))
+	defer srv.Close()
+	tr := srv.Client().Transport.(*http.Transport).Clone()
+	tr.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, srv.Listener.Addr().String())
+	}
+	old := updateClient
+	defer func() { updateClient = old; Updater.SetMirrors(); Updater.SetMirrorsOnly(false) }()
+	updateClient = &http.Client{Transport: tr}
+
+	const feed = "https://github.com/me/app/releases/latest/download/update.json"
+	Updater.SetMirrors("https://mirror.example.com/")
+	Updater.SetMirrorsOnly(true)
+	body, err := httpGet(context.Background(), feed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body.Close()
+	if len(asked) != 1 || !strings.HasPrefix(asked[0], "mirror.example.com/") {
+		t.Errorf("asked %q, want only the mirror", asked)
+	}
+}
