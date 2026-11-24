@@ -77,3 +77,45 @@ func TestOwnThemeIgnoresPreferences(t *testing.T) {
 		t.Errorf("a theme of the app's took the desktop's accent: %v", accent)
 	}
 }
+
+// An app that ignores the desktop's reduce-motion has its animations again,
+// in every window, and has them go at once again when it stops ignoring it.
+func TestSetIgnoreReduceMotion(t *testing.T) {
+	defer SetIgnoreReduceMotion(false)
+	target := float32(0)
+	var got float32
+	var reduced bool
+	tt := coreNewTester(func(c *context) {
+		reduced = c.Preferences().ReduceMotion
+		got = coreBox(c).Size(10, 10).Animate("x", target, time.Second)
+	}, 200, 100)
+	tt.SetPreferences(Preferences{ReduceMotion: true})
+	if !reduced {
+		t.Fatal("ReduceMotion was not reported")
+	}
+	target = 1
+	tt.Frame()
+	if got != 1 {
+		t.Fatalf("asked for less motion, Animate is at %v, want 1 at once", got)
+	}
+	SetIgnoreReduceMotion(true)
+	target = 2
+	tt.Frame()
+	if reduced {
+		t.Fatal("ReduceMotion still reported while ignored")
+	}
+	if got == 2 {
+		t.Fatal("Animate went to its target at once while reduce-motion is ignored")
+	}
+	tt.Advance(200 * time.Millisecond)
+	tt.Frame()
+	if got <= 1 || got >= 2 {
+		t.Fatalf("Animate is at %v midway, want between 1 and 2", got)
+	}
+	SetIgnoreReduceMotion(false)
+	target = 3
+	tt.Frame()
+	if !reduced || got != 3 {
+		t.Fatalf("no longer ignored: reduced=%v, Animate at %v, want true and 3", reduced, got)
+	}
+}

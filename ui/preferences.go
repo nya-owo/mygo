@@ -1,5 +1,7 @@
 package ui
 
+import "sync/atomic"
+
 // Preferences are settings of the desktop that the system's own controls
 // follow. The default theme follows them, and Animate follows
 // ReduceMotion; a theme of your own (Context.SetTheme) and drawing of your
@@ -28,8 +30,30 @@ type Preferences struct {
 // A frame follows their changes.
 func (c *context) Preferences() Preferences { return c.rt.preferences() }
 
-// preferences returns the desktop's settings, read once until they change.
+// ignoreReduceMotion is SetIgnoreReduceMotion's switch, for every window.
+var ignoreReduceMotion atomic.Bool
+
+// SetIgnoreReduceMotion makes every window of the app move as though the
+// desktop did not ask for less motion: Preferences.ReduceMotion reads
+// false, and animations, transitions, poses and scrolling glide again. An
+// app offers it for its own setting, when the desktop's animation effects
+// are off for other reasons than the listener's; its windows take it from
+// their next frame, so the app redraws them.
+func SetIgnoreReduceMotion(ignore bool) { ignoreReduceMotion.Store(ignore) }
+
+// preferences returns the desktop's settings, read once until they change,
+// with ReduceMotion off while the app ignores it.
 func (rt *engine) preferences() Preferences {
+	p := rt.desktopPreferences()
+	if ignoreReduceMotion.Load() {
+		p.ReduceMotion = false
+	}
+	return p
+}
+
+// desktopPreferences returns the desktop's settings, read once until they
+// change.
+func (rt *engine) desktopPreferences() Preferences {
 	if !rt.prefsKnown {
 		p := rt.host.preferences()
 		rt.prefs = Preferences{
