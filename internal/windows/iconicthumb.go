@@ -7,6 +7,7 @@ import (
 	"image"
 	_ "image/jpeg"
 	_ "image/png"
+	"math"
 	"unsafe"
 
 	xdraw "golang.org/x/image/draw"
@@ -66,12 +67,42 @@ func (w *window) sendIconicThumbnail(lp uintptr) {
 	if w.thumbnail == nil {
 		return
 	}
-	bmp := thumbnailBitmap(w.thumbnail, int(hiword(lp)), int(loword(lp)))
-	if bmp == 0 {
-		return
+	maxW, maxH := thumbnailRoom(int(hiword(lp)), int(loword(lp)))
+	// Windows 11 24H2 refuses some sizes within the room it asks for with
+	// E_INVALIDARG, and shows the app's icon instead (nya-owo/cloudy#52):
+	// smaller again until it takes one.
+	for _, k := range []float64{1, 0.7, 0.5} {
+		bmp := thumbnailBitmap(w.thumbnail, int(float64(maxW)*k), int(float64(maxH)*k))
+		if bmp == 0 {
+			return
+		}
+		hr, _, _ := procDwmSetIconicThumbnail.Call(w.hwnd, bmp, 0)
+		procDeleteObject.Call(bmp)
+		if !failed(hr) {
+			return
+		}
 	}
-	procDwmSetIconicThumbnail.Call(w.hwnd, bmp, 0)
-	procDeleteObject.Call(bmp)
+}
+
+// thumbnailMaxArea is the most pixels a thumbnail bitmap has: Windows 11
+// 24H2's DWM refuses larger ones at some display scales (175%: 200×200
+// fails, 142×142 and 200×101 go), within the room it asks for.
+const thumbnailMaxArea = 200 * 101
+
+// thumbnailRoom is the room a thumbnail of the room DWM asks for, maxW×maxH,
+// is made to fit in: one pixel less high, as 24H2 takes the height it asks
+// for as a bound not reached (200×102 asked, 200×102 refused, 200×101
+// taken), and no more than thumbnailMaxArea, the proportions kept.
+func thumbnailRoom(maxW, maxH int) (int, int) {
+	maxH--
+	if maxW <= 0 || maxH <= 0 {
+		return 0, 0
+	}
+	if area := maxW * maxH; area > thumbnailMaxArea {
+		k := math.Sqrt(float64(thumbnailMaxArea) / float64(area))
+		maxW, maxH = int(float64(maxW)*k), int(float64(maxH)*k)
+	}
+	return maxW, maxH
 }
 
 // sendLivePreview answers WM_DWMSENDICONICLIVEPREVIEWBITMAP. An iconic
