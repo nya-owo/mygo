@@ -63,7 +63,6 @@ const (
 	speakerFrontRight             = 0x2
 	audclntShareModeShared        = 0
 	audclntStreamFlagsEventCB     = 0x00040000
-	audclntStreamFlagsNoPersist   = 0x00080000
 	audclntStreamFlagsAutoConvert = 0x80000000
 	audclntStreamFlagsSRCQuality  = 0x08000000
 	waitObject0                   = 0
@@ -206,7 +205,10 @@ func (d *wasapiDevice) open(ahead time.Duration, want string) error {
 	}
 	// ahead, converted to the device's format by WASAPI's resampler.
 	duration := uintptr(ahead / 100) // in 100 ns
-	flags := uintptr(audclntStreamFlagsEventCB | audclntStreamFlagsNoPersist | audclntStreamFlagsAutoConvert | audclntStreamFlagsSRCQuality)
+	// Without AUDCLNT_STREAMFLAGS_NOPERSIST: the volume the listener sets for
+	// the app in Windows' volume mixer is kept for its next start, as for
+	// any app; with it, the app came back at full volume each time.
+	flags := uintptr(audclntStreamFlagsEventCB | audclntStreamFlagsAutoConvert | audclntStreamFlagsSRCQuality)
 	if hr := comCall(d.client, 3, audclntShareModeShared, flags, duration, 0, uintptr(unsafe.Pointer(&f)), 0); failed(hr) {
 		return hresult("IAudioClient.Initialize", hr)
 	}
